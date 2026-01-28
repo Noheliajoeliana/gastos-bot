@@ -73,7 +73,7 @@ async function enviarResumenSemanal() {
 
     // Gastos Usuario 1
     msg += `👤 *${userName1}* gastó: $${summary.total1.toFixed(2)}\n`;
-    summary.expenses1.forEach((exp, i) => {
+    summary.expenses1.forEach(exp => {
       msg += `  ${exp.num}. $${exp.amountUSD.toFixed(2)} - ${exp.description}\n`;
     });
 
@@ -81,7 +81,7 @@ async function enviarResumenSemanal() {
 
     // Gastos Usuario 2
     msg += `👤 *${userName2}* gastó: $${summary.total2.toFixed(2)}\n`;
-    summary.expenses2.forEach((exp, i) => {
+    summary.expenses2.forEach(exp => {
       msg += `  ${exp.num}. $${exp.amountUSD.toFixed(2)} - ${exp.description}\n`;
     });
 
@@ -180,7 +180,7 @@ bot.command('resumen', async (ctx) => {
 
     // Gastos Usuario 1
     msg += `👤 *${userName1}* gastó: $${summary.total1.toFixed(2)}\n`;
-    summary.expenses1.forEach((exp, i) => {
+    summary.expenses1.forEach(exp => {
       const tipo = exp.isProportional ? ' 📊' : ' ⚖️';
       msg += `  ${exp.num}.${tipo} $${exp.amountUSD.toFixed(2)} - ${exp.description}\n`;
     });
@@ -190,7 +190,7 @@ bot.command('resumen', async (ctx) => {
 
     // Gastos Usuario 2
     msg += `👤 *${userName2}* gastó: $${summary.total2.toFixed(2)}\n`;
-    summary.expenses2.forEach((exp, i) => {
+    summary.expenses2.forEach(exp => {
       const tipo = exp.isProportional ? ' 📊' : ' ⚖️';
       msg += `  ${exp.num}.${tipo} $${exp.amountUSD.toFixed(2)} - ${exp.description}\n`;
     });
