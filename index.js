@@ -2,6 +2,7 @@ require('dotenv').config();
 const { Telegraf } = require('telegraf');
 const mongoose = require('mongoose');
 const Expense = require('./models/Expense');
+const Debt = require('./models/Debt');
 const { getWeekStart, parseExpense, calculateUSD, calculateSummary } = require('./utils/helpers');
 
 const bot = new Telegraf(process.env.BOT_TOKEN);
@@ -36,79 +37,165 @@ async function enviarResumenSemanal() {
     console.log('📅 Ejecutando resumen semanal...');
 
     const weekDoc = await Expense.findOne({ processed: false }).sort({ weekStart: -1 });
+    const debts = await Debt.find({ settled: false });
 
-    if (!weekDoc || weekDoc.expenses.length === 0) {
-      console.log('No hay gastos esta semana');
+    if ((!weekDoc || weekDoc.expenses.length === 0) && debts.length === 0) {
+      console.log('No hay gastos ni deudas para procesar');
       // Enviar mensaje a ambos usuarios
       for (const userId of AUTHORIZED_USERS) {
         await bot.telegram.sendMessage(
             userId,
-            '📊 *RESUMEN SEMANAL*\n\nNo hubo gastos esta semana. 🎉',
+            '📊 *RESUMEN SEMANAL*\n\nNo hubo gastos ni deudas esta semana. 🎉',
             { parse_mode: 'Markdown' }
         );
       }
-
-      // Si existe el documento vacío, marcarlo como procesado
-      if (weekDoc) {
-        weekDoc.processed = true;
-        weekDoc.weekEnd = new Date();
-        await weekDoc.save();
-      }
-
       return;
     }
 
-    const summary = calculateSummary(
-        weekDoc.expenses,
-        AUTHORIZED_USERS[0],
-        AUTHORIZED_USERS[1]
-    );
-
+    const proportion1 = parseFloat(process.env.USER_PROPORTION_1);
+    const proportion2 = parseFloat(process.env.USER_PROPORTION_2);
     const userName1 = process.env.USER_NAME_1;
     const userName2 = process.env.USER_NAME_2;
 
     // Construir mensaje
     let msg = '📊 *RESUMEN SEMANAL*\n';
-
-    // Gastos Usuario 1
-    msg += `👤 *${userName1}* gastó: $${summary.total1.toFixed(2)}\n`;
-    summary.expenses1.forEach(exp => {
-      msg += `  ${exp.num}. $${exp.amountUSD.toFixed(2)} - ${exp.description}\n`;
-    });
-
+    if (weekDoc) {
+      msg += `Semana del ${weekDoc.weekStart.toLocaleDateString('es-ES')}\n`;
+    }
     msg += '\n';
 
-    // Gastos Usuario 2
-    msg += `👤 *${userName2}* gastó: $${summary.total2.toFixed(2)}\n`;
-    summary.expenses2.forEach(exp => {
-      msg += `  ${exp.num}. $${exp.amountUSD.toFixed(2)} - ${exp.description}\n`;
-    });
+    // ========== GASTOS COMPARTIDOS ==========
+    let balance_gastos = 0;
 
-    msg += '\n';
-    msg += `💰 *Total general:* $${summary.totalGeneral.toFixed(2)}\n\n`;
+    if (weekDoc && weekDoc.expenses.length > 0) {
+      const summary = calculateSummary(
+          weekDoc.expenses,
+          AUTHORIZED_USERS[0],
+          AUTHORIZED_USERS[1],
+          proportion1,
+          proportion2
+      );
 
-    // Balance
-    if (summary.balance > 0) {
-      const deudor = summary.deudor === 'Usuario1' ? userName1 : userName2;
-      const acreedor = summary.acreedor === 'Usuario1' ? userName1 : userName2;
-      msg += `⚖️ *${deudor}* le debe *$${summary.balance.toFixed(2)}* a *${acreedor}*\n\n`;
-    } else {
-      msg += '⚖️ *Están a mano* 🎉\n\n';
+      // Gastos Usuario 1
+      msg += `👤 *${userName1}* gastó: $${summary.total1.toFixed(2)}\n`;
+      summary.expenses1.forEach((exp, i) => {
+        const tipo = exp.isProporcional ? ' 📊' : ' ⚖️';
+        msg += `  ${i + 1}.${tipo} $${exp.amountUSD.toFixed(2)} - ${exp.description}\n`;
+      });
+      msg += `  _Debía pagar: $${summary.debeUser1.toFixed(2)}_\n`;
+
+      msg += '\n';
+
+      // Gastos Usuario 2
+      msg += `👤 *${userName2}* gastó: $${summary.total2.toFixed(2)}\n`;
+      summary.expenses2.forEach((exp, i) => {
+        const tipo = exp.isProporcional ? ' 📊' : ' ⚖️';
+        msg += `  ${i + 1}.${tipo} $${exp.amountUSD.toFixed(2)} - ${exp.description}\n`;
+      });
+      msg += `  _Debía pagar: $${summary.debeUser2.toFixed(2)}_\n`;
+
+      msg += '\n';
+      msg += `💰 *Total general:* $${summary.totalGeneral.toFixed(2)}\n\n`;
+
+      // Balance de gastos compartidos
+      msg += `*Balance gastos compartidos:*\n`;
+      if (summary.balance > 0) {
+        const deudor = summary.deudor === 'Usuario1' ? userName1 : userName2;
+        const acreedor = summary.acreedor === 'Usuario1' ? userName1 : userName2;
+        msg += `${deudor} debía $${summary.balance.toFixed(2)} a ${acreedor}\n\n`;
+
+        // Calcular para balance total
+        if (summary.deudor === 'Usuario1') {
+          balance_gastos = -summary.balance; // Nohelia debe
+        } else {
+          balance_gastos = summary.balance; // Nohelia le deben
+        }
+      } else {
+        msg += 'Estaban a mano 🎉\n\n';
+      }
     }
 
-    msg += '✨ Nueva semana comienza ahora.';
+    // ========== DEUDAS INDIVIDUALES ==========
+    let balance_deudas = 0;
+
+    if (debts.length > 0) {
+      msg += `━━━━━━━━━━━━━━━━\n`;
+      msg += `💳 *DEUDAS INDIVIDUALES*\n\n`;
+
+      let nohelia_debe = 0;
+      let antonio_debe = 0;
+
+      debts.forEach((debt, index) => {
+        const debtorName = debt.debtorId === AUTHORIZED_USERS[0] ? userName1 : userName2;
+        const creditorName = debt.creditorId === AUTHORIZED_USERS[0] ? userName1 : userName2;
+
+        msg += `${index + 1}. ${debtorName} → ${creditorName}: $${debt.amount.toFixed(2)}\n`;
+        msg += `   📝 ${debt.description}\n`;
+
+        if (debt.debtorId === AUTHORIZED_USERS[0]) {
+          nohelia_debe += debt.amount;
+        } else {
+          antonio_debe += debt.amount;
+        }
+      });
+
+      // Balance neto de deudas individuales
+      msg += `\n*Balance deudas individuales:*\n`;
+      const balanceDeudas = Math.abs(nohelia_debe - antonio_debe);
+      if (nohelia_debe > antonio_debe) {
+        msg += `${userName1} debía $${balanceDeudas.toFixed(2)} a ${userName2}\n\n`;
+        balance_deudas = -balanceDeudas;
+      } else if (antonio_debe > nohelia_debe) {
+        msg += `${userName2} debía $${balanceDeudas.toFixed(2)} a ${userName1}\n\n`;
+        balance_deudas = balanceDeudas;
+      } else {
+        msg += `Estaban a mano 🎉\n\n`;
+      }
+    }
+
+    // ========== BALANCE TOTAL FINAL ==========
+    msg += `━━━━━━━━━━━━━━━━\n`;
+    msg += `💵 *BALANCE TOTAL FINAL*\n\n`;
+
+    const balance_total = balance_gastos + balance_deudas;
+
+    if (Math.abs(balance_total) < 0.01) {
+      msg += `*¡Están completamente a mano!* 🎉\n\n`;
+    } else if (balance_total > 0) {
+      msg += `*${userName2}* le debe *$${Math.abs(balance_total).toFixed(2)}* a *${userName1}*\n\n`;
+    } else {
+      msg += `*${userName1}* le debe *$${Math.abs(balance_total).toFixed(2)}* a *${userName2}*\n\n`;
+    }
+
+    msg += '✨ Nueva semana comienza ahora.\n';
+    msg += '✅ Todos los gastos y deudas han sido saldados.';
 
     // Enviar a ambos usuarios
     for (const userId of AUTHORIZED_USERS) {
       await bot.telegram.sendMessage(userId, msg, { parse_mode: 'Markdown' });
     }
 
-    // Marcar semana como procesada (NO ELIMINAR)
-    weekDoc.processed = true;
-    weekDoc.weekEnd = new Date();
-    await weekDoc.save();
+    // Marcar semana como procesada
+    if (weekDoc) {
+      weekDoc.processed = true;
+      weekDoc.weekEnd = new Date();
+      await weekDoc.save();
+    }
 
-    console.log('✅ Resumen semanal enviado y semana marcada como procesada');
+    // Marcar todas las deudas como saldadas
+    if (debts.length > 0) {
+      await Debt.updateMany(
+          { settled: false },
+          {
+            $set: {
+              settled: true,
+              settledAt: new Date()
+            }
+          }
+      );
+    }
+
+    console.log('✅ Resumen semanal enviado, gastos y deudas saldados');
 
   } catch (error) {
     console.error('❌ Error en resumen semanal:', error);
@@ -138,15 +225,18 @@ bot.command('ayuda', (ctx) => {
       '*Registrar gastos:*\n' +
       '• 50/50: `20 cash supermercado`\n' +
       '• Proporcional: `20 cash supermercado proporcional`\n' +
-      '• Con bs: `1200 bs 60 restaurante`\n' +
-      '• Con bs proporcional: `1200 bs 60 restaurante proporcional`\n\n' +
-      '*Comandos:*\n' +
-      '• /resumen - Ver gastos de la semana\n' +
-      '• /corte - Solicitar corte semanal\n' +
+      '• Con bs: `1200 bs 60 restaurante`\n\n' +
+      '*Deudas individuales:*\n' +
+      '• `/deuda 50 cash préstamo Nohelia` - Registrar deuda\n' +
+      '• `/deuda 1200 bs 60 préstamo Antonio` - Con bs\n' +
+      '• /eliminardeuda N - Eliminar deuda (error)\n\n' +
+      '*Comandos principales:*\n' +
+      '• /resumen - Ver gastos y deudas actuales\n' +
+      '• /corte - Solicitar corte (salda todo)\n' +
       '• /si - Confirmar corte\n' +
       '• /no - Rechazar corte\n' +
       '• /cancelar - Cancelar solicitud\n' +
-      '• /eliminar N - Eliminar gasto número N\n' +
+      '• /eliminar N - Eliminar gasto\n' +
       '• /ayuda - Ver esta ayuda',
       { parse_mode: 'Markdown' }
   );
@@ -155,59 +245,149 @@ bot.command('ayuda', (ctx) => {
 bot.command('resumen', async (ctx) => {
   try {
     const weekDoc = await Expense.findOne({ processed: false }).sort({ weekStart: -1 });
+    const debts = await Debt.find({ settled: false });
 
-    if (!weekDoc || weekDoc.expenses.length === 0) {
-      return ctx.reply('📊 No hay gastos registrados esta semana.');
+    if ((!weekDoc || weekDoc.expenses.length === 0) && debts.length === 0) {
+      return ctx.reply('📊 No hay gastos ni deudas registrados esta semana.');
     }
 
     const proportion1 = parseFloat(process.env.USER_PROPORTION_1);
     const proportion2 = parseFloat(process.env.USER_PROPORTION_2);
-
-    const summary = calculateSummary(
-        weekDoc.expenses,
-        AUTHORIZED_USERS[0],
-        AUTHORIZED_USERS[1],
-        proportion1,
-        proportion2
-    );
-
     const userName1 = process.env.USER_NAME_1;
     const userName2 = process.env.USER_NAME_2;
 
-    // Construir mensaje
     let msg = '📊 *RESUMEN DE LA SEMANA*\n\n';
 
-    // Gastos Usuario 1
-    msg += `👤 *${userName1}* gastó: $${summary.total1.toFixed(2)}\n`;
-    summary.expenses1.forEach(exp => {
-      const tipo = exp.isProportional ? ' 📊' : ' ⚖️';
-      msg += `  ${exp.num}.${tipo} $${exp.amountUSD.toFixed(2)} - ${exp.description}\n`;
-    });
-    msg += `  _Debe pagar: $${summary.debeUser1.toFixed(2)}_\n`;
+    // ========== GASTOS COMPARTIDOS ==========
+    if (weekDoc && weekDoc.expenses.length > 0) {
+      const summary = calculateSummary(
+          weekDoc.expenses,
+          AUTHORIZED_USERS[0],
+          AUTHORIZED_USERS[1],
+          proportion1,
+          proportion2
+      );
 
-    msg += '\n';
+      // Gastos Usuario 1
+      msg += `👤 *${userName1}* gastó: $${summary.total1.toFixed(2)}\n`;
+      summary.expenses1.forEach(exp => {
+        const tipo = exp.isProportional ? ' 📊' : ' ⚖️';
+        msg += `  ${exp.num}.${tipo} $${exp.amountUSD.toFixed(2)} - ${exp.description}\n`;
+      });
+      msg += `  _Debe pagar: $${summary.debeUser1.toFixed(2)}_\n`;
 
-    // Gastos Usuario 2
-    msg += `👤 *${userName2}* gastó: $${summary.total2.toFixed(2)}\n`;
-    summary.expenses2.forEach(exp => {
-      const tipo = exp.isProportional ? ' 📊' : ' ⚖️';
-      msg += `  ${exp.num}.${tipo} $${exp.amountUSD.toFixed(2)} - ${exp.description}\n`;
-    });
-    msg += `  _Debe pagar: $${summary.debeUser2.toFixed(2)}_\n`;
+      msg += '\n';
 
-    msg += '\n';
-    msg += `💰 *Total general:* $${summary.totalGeneral.toFixed(2)}\n\n`;
+      // Gastos Usuario 2
+      msg += `👤 *${userName2}* gastó: $${summary.total2.toFixed(2)}\n`;
+      summary.expenses2.forEach(exp => {
+        const tipo = exp.isProportional ? ' 📊' : ' ⚖️';
+        msg += `  ${exp.num}.${tipo} $${exp.amountUSD.toFixed(2)} - ${exp.description}\n`;
+      });
+      msg += `  _Debe pagar: $${summary.debeUser2.toFixed(2)}_\n`;
 
-    // Balance
-    if (summary.balance > 0) {
-      const deudor = summary.deudor === 'Usuario1' ? userName1 : userName2;
-      const acreedor = summary.acreedor === 'Usuario1' ? userName1 : userName2;
-      msg += `⚖️ *${deudor}* le debe *$${summary.balance.toFixed(2)}* a *${acreedor}*\n\n`;
-    } else {
-      msg += '⚖️ *Están a mano* 🎉\n\n';
+      msg += '\n';
+      msg += `💰 *Total general:* $${summary.totalGeneral.toFixed(2)}\n\n`;
+
+      // Balance de gastos compartidos
+      msg += `*Balance gastos compartidos:*\n`;
+      if (summary.balance > 0) {
+        const deudor = summary.deudor === 'Usuario1' ? userName1 : userName2;
+        const acreedor = summary.acreedor === 'Usuario1' ? userName1 : userName2;
+        msg += `${deudor} debe $${summary.balance.toFixed(2)} a ${acreedor}\n\n`;
+      } else {
+        msg += 'Están a mano 🎉\n\n';
+      }
     }
 
-    msg += '_📊 = Proporcional (41/59) | ⚖️ = 50/50_';
+    // ========== DEUDAS INDIVIDUALES ==========
+    if (debts.length > 0) {
+      msg += `━━━━━━━━━━━━━━━━\n`;
+      msg += `💳 *DEUDAS INDIVIDUALES*\n\n`;
+
+      let nohelia_debe = 0;
+      let antonio_debe = 0;
+
+      debts.forEach((debt, index) => {
+        const debtorName = debt.debtorId === AUTHORIZED_USERS[0] ? userName1 : userName2;
+        const creditorName = debt.creditorId === AUTHORIZED_USERS[0] ? userName1 : userName2;
+
+        msg += `${index + 1}. ${debtorName} → ${creditorName}: $${debt.amount.toFixed(2)}\n`;
+        msg += `   📝 ${debt.description}\n`;
+
+        if (debt.debtorId === AUTHORIZED_USERS[0]) {
+          nohelia_debe += debt.amount;
+        } else {
+          antonio_debe += debt.amount;
+        }
+      });
+
+      // Balance neto de deudas individuales
+      msg += `\n*Balance deudas individuales:*\n`;
+      const balanceDeudas = Math.abs(nohelia_debe - antonio_debe);
+      if (nohelia_debe > antonio_debe) {
+        msg += `${userName1} debe $${balanceDeudas.toFixed(2)} a ${userName2}\n\n`;
+      } else if (antonio_debe > nohelia_debe) {
+        msg += `${userName2} debe $${balanceDeudas.toFixed(2)} a ${userName1}\n\n`;
+      } else {
+        msg += `Están a mano 🎉\n\n`;
+      }
+    }
+
+    // ========== BALANCE TOTAL FINAL ==========
+    msg += `━━━━━━━━━━━━━━━━\n`;
+    msg += `💵 *BALANCE TOTAL*\n\n`;
+
+    let balance_gastos = 0;
+    let balance_deudas = 0;
+
+    // Calcular balance de gastos compartidos
+    if (weekDoc && weekDoc.expenses.length > 0) {
+      const summary = calculateSummary(
+          weekDoc.expenses,
+          AUTHORIZED_USERS[0],
+          AUTHORIZED_USERS[1],
+          proportion1,
+          proportion2
+      );
+
+      if (summary.balance > 0) {
+        if (summary.deudor === 'Usuario1') {
+          balance_gastos = -summary.balance; // Nohelia debe
+        } else {
+          balance_gastos = summary.balance; // Nohelia le deben
+        }
+      }
+    }
+
+    // Calcular balance de deudas individuales
+    if (debts.length > 0) {
+      let nohelia_debe = 0;
+      let antonio_debe = 0;
+
+      debts.forEach(debt => {
+        if (debt.debtorId === AUTHORIZED_USERS[0]) {
+          nohelia_debe += debt.amount;
+        } else {
+          antonio_debe += debt.amount;
+        }
+      });
+
+      balance_deudas = antonio_debe - nohelia_debe; // Positivo si Antonio debe más
+    }
+
+    // Balance total
+    const balance_total = balance_gastos + balance_deudas;
+
+    if (Math.abs(balance_total) < 0.01) {
+      msg += `*¡Están completamente a mano!* 🎉`;
+    } else if (balance_total > 0) {
+      msg += `*${userName2}* le debe *$${Math.abs(balance_total).toFixed(2)}* a *${userName1}*`;
+    } else {
+      msg += `*${userName1}* le debe *$${Math.abs(balance_total).toFixed(2)}* a *${userName2}*`;
+    }
+
+    msg += '\n\n_📊 = Proporcional (41/59) | ⚖️ = 50/50_';
 
     ctx.reply(msg, { parse_mode: 'Markdown' });
 
@@ -431,7 +611,183 @@ bot.command('cancelar', async (ctx) => {
   }
 });
 
-// Registrar gasto (cualquier mensaje que no sea comando)
+bot.command('deuda', async (ctx) => {
+  try {
+    const args = ctx.message.text.split(' ').slice(1); // quitar "/deuda"
+
+    if (args.length < 4) {
+      return ctx.reply(
+          '❌ Formato incorrecto.\n\n' +
+          '*Uso:* `/deuda monto método [tasa] descripción usuario`\n\n' +
+          '*Ejemplos:*\n' +
+          '• `/deuda 50 cash préstamo gasolina Nohelia`\n' +
+          '• `/deuda 1200 bs 60 préstamo Antonio`\n\n' +
+          'El usuario al final indica quién DEBE el dinero.',
+          { parse_mode: 'Markdown' }
+      );
+    }
+
+    const amount = parseFloat(args[0]);
+    const method = args[1].toLowerCase();
+
+    if (isNaN(amount) || amount <= 0) {
+      return ctx.reply('❌ El monto debe ser un número positivo.');
+    }
+
+    if (!['cash', 'bs'].includes(method)) {
+      return ctx.reply('❌ El método debe ser "cash" o "bs".');
+    }
+
+    let rate = null;
+    let description = '';
+    let debtorName = '';
+
+    if (method === 'bs') {
+      // Necesita tasa
+      if (args.length < 5) {
+        return ctx.reply('❌ Falta la tasa de conversión para bs.');
+      }
+
+      rate = parseFloat(args[2]);
+      if (isNaN(rate) || rate <= 0) {
+        return ctx.reply('❌ La tasa debe ser un número positivo.');
+      }
+
+      // El último elemento es el nombre del deudor
+      debtorName = args[args.length - 1];
+      // La descripción es todo lo del medio
+      description = args.slice(3, -1).join(' ');
+
+    } else {
+      // cash
+      // El último elemento es el nombre del deudor
+      debtorName = args[args.length - 1];
+      // La descripción es todo lo del medio
+      description = args.slice(2, -1).join(' ');
+    }
+
+    if (!description.trim()) {
+      return ctx.reply('❌ Debes incluir una descripción.');
+    }
+
+    // Identificar quién es el deudor
+    const userName1 = process.env.USER_NAME_1;
+    const userName2 = process.env.USER_NAME_2;
+
+    let debtorId;
+    let creditorId;
+    let creditorName;
+
+    if (debtorName.toLowerCase() === userName1.toLowerCase()) {
+      debtorId = AUTHORIZED_USERS[0];
+      creditorId = AUTHORIZED_USERS[1];
+      creditorName = userName2;
+      debtorName = userName1; // normalizar capitalización
+    } else if (debtorName.toLowerCase() === userName2.toLowerCase()) {
+      debtorId = AUTHORIZED_USERS[1];
+      creditorId = AUTHORIZED_USERS[0];
+      creditorName = userName1;
+      debtorName = userName2; // normalizar capitalización
+    } else {
+      return ctx.reply(
+          `❌ El usuario debe ser "${userName1}" o "${userName2}".`,
+          { parse_mode: 'Markdown' }
+      );
+    }
+
+    // Calcular monto en USD
+    const amountUSD = method === 'cash' ? amount : amount / rate;
+
+    // Crear la deuda
+    const debt = new Debt({
+      debtorId,
+      creditorId,
+      amount: amountUSD,
+      description
+    });
+
+    await debt.save();
+
+    // Confirmar a ambos
+    let confirmMsg = `💳 *DEUDA REGISTRADA*\n\n`;
+    confirmMsg += `${debtorName} le debe $${amountUSD.toFixed(2)} a ${creditorName}\n`;
+    if (method === 'bs') {
+      confirmMsg += `(${amount} bs a tasa ${rate})\n`;
+    }
+    confirmMsg += `📝 ${description}`;
+
+    ctx.reply(confirmMsg, { parse_mode: 'Markdown' });
+
+    // Notificar a la otra persona (si no es quien lo registró)
+    const otherUserId = ctx.from.id === AUTHORIZED_USERS[0] ? AUTHORIZED_USERS[1] : AUTHORIZED_USERS[0];
+    await bot.telegram.sendMessage(
+        otherUserId,
+        confirmMsg,
+        { parse_mode: 'Markdown' }
+    );
+
+  } catch (error) {
+    console.error('Error al registrar deuda:', error);
+    ctx.reply('❌ Hubo un error al registrar la deuda.');
+  }
+});
+
+// Comando eliminardeuda - Eliminar una deuda (sin marcarla como pagada)
+bot.command('eliminardeuda', async (ctx) => {
+  try {
+    const args = ctx.message.text.split(' ');
+
+    if (args.length < 2) {
+      return ctx.reply(
+          '❌ Debes especificar el número de la deuda.\n\n' +
+          'Usa: `/eliminardeuda N`\n' +
+          'Ejemplo: `/eliminardeuda 1`\n\n' +
+          'Usa /deudas para ver los números.',
+          { parse_mode: 'Markdown' }
+      );
+    }
+
+    const debtNum = parseInt(args[1]);
+
+    if (isNaN(debtNum) || debtNum < 1) {
+      return ctx.reply('❌ Número de deuda inválido.');
+    }
+
+    const debts = await Debt.find({ settled: false });
+
+    if (debts.length === 0) {
+      return ctx.reply('📊 No hay deudas pendientes para eliminar.');
+    }
+
+    if (debtNum > debts.length) {
+      return ctx.reply(`❌ Solo hay ${debts.length} deudas pendientes.`);
+    }
+
+    const debt = debts[debtNum - 1];
+
+    const userName1 = process.env.USER_NAME_1;
+    const userName2 = process.env.USER_NAME_2;
+    const debtorName = debt.debtorId === AUTHORIZED_USERS[0] ? userName1 : userName2;
+    const creditorName = debt.creditorId === AUTHORIZED_USERS[0] ? userName1 : userName2;
+
+    // Eliminar la deuda
+    await Debt.deleteOne({ _id: debt._id });
+
+    const confirmMsg =
+        `🗑️ *DEUDA ELIMINADA*\n\n` +
+        `${debtorName} → ${creditorName}: $${debt.amount.toFixed(2)}\n` +
+        `📝 ${debt.description}`;
+
+    // Notificar a ambos
+    for (const userId of AUTHORIZED_USERS) {
+      await bot.telegram.sendMessage(userId, confirmMsg, { parse_mode: 'Markdown' });
+    }
+
+  } catch (error) {
+    console.error('Error al eliminar deuda:', error);
+    ctx.reply('❌ Hubo un error al eliminar la deuda.');
+  }
+});
 bot.on('text', async (ctx) => {
   if (ctx.message.text.startsWith('/')) {
     return;
