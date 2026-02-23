@@ -69,7 +69,6 @@ async function enviarResumenSemanal() {
 
     // Construir mensaje
     let msg = '📊 *RESUMEN SEMANAL*\n';
-    msg += `Semana del ${weekStart.toLocaleDateString('es-ES')}\n\n`;
 
     // Gastos Usuario 1
     msg += `👤 *${userName1}* gastó: $${summary.total1.toFixed(2)}\n`;
