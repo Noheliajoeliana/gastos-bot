@@ -7,20 +7,37 @@ const { getWeekStart, parseExpense, calculateUSD, calculateSummary } = require('
 
 const bot = new Telegraf(process.env.BOT_TOKEN);
 
-// IDs autorizados
+// Only these two Telegram user IDs are allowed to interact with the bot.
+// Stored as integers because Telegraf exposes ctx.from.id as a number.
 const AUTHORIZED_USERS = [
   parseInt(process.env.USER_ID_1),
   parseInt(process.env.USER_ID_2)
 ];
 
-// Sistema de confirmación para reset
+/**
+ * In-memory state for a pending /corte (settlement) request.
+ *
+ * A corte requires explicit confirmation from the *other* user before it
+ * executes, preventing accidental or unilateral resets. The object tracks:
+ *   active       - Whether a request is currently waiting for confirmation.
+ *   initiatedBy  - Telegram ID of the user who triggered /corte.
+ *   timestamp    - When the request was created (used for logging; expiry is
+ *                  handled by clearPendingReset via setTimeout).
+ */
 const pendingReset = {
   active: false,
   initiatedBy: null,
   timestamp: null
 };
 
-// Función para limpiar confirmación pendiente después de 5 minutos
+/**
+ * Schedules the automatic expiry of a pending corte request after 5 minutes.
+ *
+ * 5 minutes was chosen as a balance between giving the other user enough time
+ * to respond and avoiding a stale pending state that could confuse future requests.
+ * The function only clears the state if it is still marked active — this prevents
+ * a race condition where the timer fires after the request was already resolved.
+ */
 function clearPendingReset() {
   setTimeout(() => {
     if (pendingReset.active) {
@@ -28,20 +45,32 @@ function clearPendingReset() {
       pendingReset.initiatedBy = null;
       pendingReset.timestamp = null;
     }
-  }, 5 * 60 * 1000); // 5 minutos
+  }, 5 * 60 * 1000);
 }
 
-// Función para enviar resumen semanal
+/**
+ * Generates the weekly summary message, sends it to both users, and marks all
+ * shared expenses and individual debts as settled.
+ *
+ * This function is the core settlement routine. It is called either manually
+ * via /corte (after the other user confirms with /si) or could be triggered
+ * on a schedule. The sign convention used for balance variables is:
+ *   positive value → user 2 owes user 1
+ *   negative value → user 1 owes user 2
+ *
+ * This convention is applied consistently to both balance_gastos (shared
+ * expenses) and balance_deudas (individual debts) so they can be summed into
+ * a single final balance without extra conditionals.
+ */
 async function enviarResumenSemanal() {
   try {
-    console.log('📅 Ejecutando resumen semanal...');
+    console.log('📅 Running weekly summary…');
 
     const weekDoc = await Expense.findOne({ processed: false }).sort({ weekStart: -1 });
     const debts = await Debt.find({ settled: false });
 
     if ((!weekDoc || weekDoc.expenses.length === 0) && debts.length === 0) {
-      console.log('No hay gastos ni deudas para procesar');
-      // Enviar mensaje a ambos usuarios
+      console.log('No expenses or debts to process');
       for (const userId of AUTHORIZED_USERS) {
         await bot.telegram.sendMessage(
             userId,
@@ -57,14 +86,14 @@ async function enviarResumenSemanal() {
     const userName1 = process.env.USER_NAME_1;
     const userName2 = process.env.USER_NAME_2;
 
-    // Construir mensaje
     let msg = '📊 *RESUMEN SEMANAL*\n';
     if (weekDoc) {
       msg += `Semana del ${weekDoc.weekStart.toLocaleDateString('es-ES')}\n`;
     }
     msg += '\n';
 
-    // ========== GASTOS COMPARTIDOS ==========
+    // ── SHARED EXPENSES ──────────────────────────────────────────────────────
+    // balance_gastos uses the sign convention described above.
     let balance_gastos = 0;
 
     if (weekDoc && weekDoc.expenses.length > 0) {
@@ -76,7 +105,6 @@ async function enviarResumenSemanal() {
           proportion2
       );
 
-      // Gastos Usuario 1
       msg += `👤 *${userName1}* gastó: $${summary.total1.toFixed(2)}\n`;
       summary.expenses1.forEach((exp, i) => {
         const tipo = exp.isProporcional ? ' 📊' : ' ⚖️';
@@ -86,7 +114,6 @@ async function enviarResumenSemanal() {
 
       msg += '\n';
 
-      // Gastos Usuario 2
       msg += `👤 *${userName2}* gastó: $${summary.total2.toFixed(2)}\n`;
       summary.expenses2.forEach((exp, i) => {
         const tipo = exp.isProporcional ? ' 📊' : ' ⚖️';
@@ -97,25 +124,26 @@ async function enviarResumenSemanal() {
       msg += '\n';
       msg += `💰 *Total general:* $${summary.totalGeneral.toFixed(2)}\n\n`;
 
-      // Balance de gastos compartidos
       msg += `*Balance gastos compartidos:*\n`;
       if (summary.balance > 0) {
         const deudor = summary.deudor === 'Usuario1' ? userName1 : userName2;
         const acreedor = summary.acreedor === 'Usuario1' ? userName1 : userName2;
         msg += `${deudor} debía $${summary.balance.toFixed(2)} a ${acreedor}\n\n`;
 
-        // Calcular para balance total
+        // Translate the symbolic deudor into a signed number for the final total.
         if (summary.deudor === 'Usuario1') {
-          balance_gastos = -summary.balance; // Nohelia debe
+          balance_gastos = -summary.balance; // user 1 owes → negative
         } else {
-          balance_gastos = summary.balance; // Nohelia le deben
+          balance_gastos = summary.balance;  // user 2 owes → positive
         }
       } else {
         msg += 'Estaban a mano 🎉\n\n';
       }
     }
 
-    // ========== DEUDAS INDIVIDUALES ==========
+    // ── INDIVIDUAL DEBTS ─────────────────────────────────────────────────────
+    // balance_deudas also follows the same sign convention so both balances
+    // can be added together for the final total.
     let balance_deudas = 0;
 
     if (debts.length > 0) {
@@ -139,21 +167,24 @@ async function enviarResumenSemanal() {
         }
       });
 
-      // Balance neto de deudas individuales
+      // Net the two sides to avoid counting mutual debts twice.
       msg += `\n*Balance deudas individuales:*\n`;
       const balanceDeudas = Math.abs(nohelia_debe - antonio_debe);
       if (nohelia_debe > antonio_debe) {
         msg += `${userName1} debía $${balanceDeudas.toFixed(2)} a ${userName2}\n\n`;
-        balance_deudas = -balanceDeudas;
+        balance_deudas = -balanceDeudas; // user 1 owes → negative
       } else if (antonio_debe > nohelia_debe) {
         msg += `${userName2} debía $${balanceDeudas.toFixed(2)} a ${userName1}\n\n`;
-        balance_deudas = balanceDeudas;
+        balance_deudas = balanceDeudas; // user 2 owes → positive
       } else {
         msg += `Estaban a mano 🎉\n\n`;
       }
     }
 
-    // ========== BALANCE TOTAL FINAL ==========
+    // ── FINAL TOTAL ──────────────────────────────────────────────────────────
+    // Adding the two signed balances gives the combined net amount owed.
+    // Math.abs(balance_total) < 0.01 is used instead of === 0 to guard against
+    // floating-point rounding errors in USD amounts converted from bolívars.
     msg += `━━━━━━━━━━━━━━━━\n`;
     msg += `💵 *BALANCE TOTAL FINAL*\n\n`;
 
@@ -170,19 +201,18 @@ async function enviarResumenSemanal() {
     msg += '✨ Nueva semana comienza ahora.\n';
     msg += '✅ Todos los gastos y deudas han sido saldados.';
 
-    // Enviar a ambos usuarios
     for (const userId of AUTHORIZED_USERS) {
       await bot.telegram.sendMessage(userId, msg, { parse_mode: 'Markdown' });
     }
 
-    // Marcar semana como procesada
+    // Mark the week document as processed so it no longer appears in /resumen.
     if (weekDoc) {
       weekDoc.processed = true;
       weekDoc.weekEnd = new Date();
       await weekDoc.save();
     }
 
-    // Marcar todas las deudas como saldadas
+    // Bulk-settle all outstanding individual debts in a single DB operation.
     if (debts.length > 0) {
       await Debt.updateMany(
           { settled: false },
@@ -195,19 +225,21 @@ async function enviarResumenSemanal() {
       );
     }
 
-    console.log('✅ Resumen semanal enviado, gastos y deudas saldados');
+    console.log('✅ Weekly summary sent, expenses and debts settled');
 
   } catch (error) {
-    console.error('❌ Error en resumen semanal:', error);
+    console.error('❌ Error in weekly summary:', error);
   }
 }
 
-// Conectar a MongoDB
 mongoose.connect(process.env.MONGODB_URI)
-    .then(() => console.log('✅ MongoDB conectado correctamente'))
-    .catch(err => console.error('❌ Error conectando a MongoDB:', err));
+    .then(() => console.log('✅ MongoDB connected'))
+    .catch(err => console.error('❌ MongoDB connection error:', err));
 
-// Middleware: Solo usuarios autorizados
+/**
+ * Authorization middleware — rejects all updates from users not in AUTHORIZED_USERS.
+ * Applied globally before any command handler runs.
+ */
 bot.use((ctx, next) => {
   if (AUTHORIZED_USERS.includes(ctx.from.id)) {
     return next();
@@ -242,6 +274,15 @@ bot.command('ayuda', (ctx) => {
   );
 });
 
+/**
+ * /resumen — Displays the current week's shared expenses, individual debts,
+ * and combined net balance without making any changes to the database.
+ *
+ * calculateSummary is called twice when both expense and debt sections are
+ * present: once for the per-user expense breakdown and once for the final
+ * balance block. This avoids storing intermediate summary results across the
+ * two rendering passes while keeping the code straightforward.
+ */
 bot.command('resumen', async (ctx) => {
   try {
     const weekDoc = await Expense.findOne({ processed: false }).sort({ weekStart: -1 });
@@ -258,7 +299,7 @@ bot.command('resumen', async (ctx) => {
 
     let msg = '📊 *RESUMEN DE LA SEMANA*\n\n';
 
-    // ========== GASTOS COMPARTIDOS ==========
+    // ── SHARED EXPENSES ──────────────────────────────────────────────────────
     if (weekDoc && weekDoc.expenses.length > 0) {
       const summary = calculateSummary(
           weekDoc.expenses,
@@ -268,7 +309,6 @@ bot.command('resumen', async (ctx) => {
           proportion2
       );
 
-      // Gastos Usuario 1
       msg += `👤 *${userName1}* gastó: $${summary.total1.toFixed(2)}\n`;
       summary.expenses1.forEach(exp => {
         const tipo = exp.isProportional ? ' 📊' : ' ⚖️';
@@ -278,7 +318,6 @@ bot.command('resumen', async (ctx) => {
 
       msg += '\n';
 
-      // Gastos Usuario 2
       msg += `👤 *${userName2}* gastó: $${summary.total2.toFixed(2)}\n`;
       summary.expenses2.forEach(exp => {
         const tipo = exp.isProportional ? ' 📊' : ' ⚖️';
@@ -289,7 +328,6 @@ bot.command('resumen', async (ctx) => {
       msg += '\n';
       msg += `💰 *Total general:* $${summary.totalGeneral.toFixed(2)}\n\n`;
 
-      // Balance de gastos compartidos
       msg += `*Balance gastos compartidos:*\n`;
       if (summary.balance > 0) {
         const deudor = summary.deudor === 'Usuario1' ? userName1 : userName2;
@@ -300,7 +338,7 @@ bot.command('resumen', async (ctx) => {
       }
     }
 
-    // ========== DEUDAS INDIVIDUALES ==========
+    // ── INDIVIDUAL DEBTS ─────────────────────────────────────────────────────
     if (debts.length > 0) {
       msg += `━━━━━━━━━━━━━━━━\n`;
       msg += `💳 *DEUDAS INDIVIDUALES*\n\n`;
@@ -322,7 +360,6 @@ bot.command('resumen', async (ctx) => {
         }
       });
 
-      // Balance neto de deudas individuales
       msg += `\n*Balance deudas individuales:*\n`;
       const balanceDeudas = Math.abs(nohelia_debe - antonio_debe);
       if (nohelia_debe > antonio_debe) {
@@ -334,14 +371,14 @@ bot.command('resumen', async (ctx) => {
       }
     }
 
-    // ========== BALANCE TOTAL FINAL ==========
+    // ── FINAL TOTAL ──────────────────────────────────────────────────────────
     msg += `━━━━━━━━━━━━━━━━\n`;
     msg += `💵 *BALANCE TOTAL*\n\n`;
 
     let balance_gastos = 0;
     let balance_deudas = 0;
 
-    // Calcular balance de gastos compartidos
+    // Re-compute the shared-expense balance for the final total section.
     if (weekDoc && weekDoc.expenses.length > 0) {
       const summary = calculateSummary(
           weekDoc.expenses,
@@ -353,14 +390,16 @@ bot.command('resumen', async (ctx) => {
 
       if (summary.balance > 0) {
         if (summary.deudor === 'Usuario1') {
-          balance_gastos = -summary.balance; // Nohelia debe
+          balance_gastos = -summary.balance; // user 1 owes → negative
         } else {
-          balance_gastos = summary.balance; // Nohelia le deben
+          balance_gastos = summary.balance;  // user 2 owes → positive
         }
       }
     }
 
-    // Calcular balance de deudas individuales
+    // Re-compute the individual-debt balance for the final total section.
+    // antonio_debe - nohelia_debe is positive when user 2 owes more, matching
+    // the sign convention: positive = user 2 owes user 1.
     if (debts.length > 0) {
       let nohelia_debe = 0;
       let antonio_debe = 0;
@@ -373,10 +412,9 @@ bot.command('resumen', async (ctx) => {
         }
       });
 
-      balance_deudas = antonio_debe - nohelia_debe; // Positivo si Antonio debe más
+      balance_deudas = antonio_debe - nohelia_debe;
     }
 
-    // Balance total
     const balance_total = balance_gastos + balance_deudas;
 
     if (Math.abs(balance_total) < 0.01) {
@@ -392,11 +430,18 @@ bot.command('resumen', async (ctx) => {
     ctx.reply(msg, { parse_mode: 'Markdown' });
 
   } catch (error) {
-    console.error('Error al generar resumen:', error);
+    console.error('Error generating summary:', error);
     ctx.reply('❌ Hubo un error al generar el resumen.');
   }
 });
 
+/**
+ * /eliminar N — Removes expense number N from the current week.
+ *
+ * Users can only delete their own expenses (ownership check via userId).
+ * The expense array is 1-indexed in user-facing output but 0-indexed in the
+ * database, so gastoNum - 1 is used as the splice index.
+ */
 bot.command('eliminar', async (ctx) => {
   try {
     const args = ctx.message.text.split(' ');
@@ -423,12 +468,10 @@ bot.command('eliminar', async (ctx) => {
       return ctx.reply('📊 No hay gastos registrados esta semana.');
     }
 
-    // Verificar que el número existe
     if (gastoNum > weekDoc.expenses.length) {
       return ctx.reply(`❌ Solo hay ${weekDoc.expenses.length} gastos registrados.`);
     }
 
-    // Obtener el gasto antes de eliminarlo (para mostrar confirmación)
     const gastoEliminado = weekDoc.expenses[gastoNum - 1];
     const amountUSD = calculateUSD(
         gastoEliminado.amount,
@@ -436,12 +479,10 @@ bot.command('eliminar', async (ctx) => {
         gastoEliminado.rate
     );
 
-    // Verificar que el usuario solo pueda eliminar sus propios gastos
     if (gastoEliminado.userId !== ctx.from.id) {
       return ctx.reply('❌ Solo puedes eliminar tus propios gastos.');
     }
 
-    // Eliminar el gasto
     weekDoc.expenses.splice(gastoNum - 1, 1);
     await weekDoc.save();
 
@@ -453,17 +494,26 @@ bot.command('eliminar', async (ctx) => {
     );
 
   } catch (error) {
-    console.error('Error al eliminar gasto:', error);
+    console.error('Error deleting expense:', error);
     ctx.reply('❌ Hubo un error al eliminar el gasto.');
   }
 });
 
+/**
+ * /corte — Initiates a settlement request that requires confirmation from the
+ * other user before executing.
+ *
+ * The two-user confirmation flow prevents either person from unilaterally
+ * closing the week. Once initiated, the request auto-expires after 5 minutes
+ * via clearPendingReset if the other user does not respond.
+ */
 bot.command('corte', async (ctx) => {
   try {
     const weekDoc = await Expense.findOne({ processed: false }).sort({ weekStart: -1 });
+    const debts = await Debt.find({ settled: false });
 
-    if (!weekDoc || weekDoc.expenses.length === 0) {
-      return ctx.reply('📊 No hay gastos registrados para hacer el corte.');
+    if ((!weekDoc || weekDoc.expenses.length === 0) && debts.length === 0) {
+      return ctx.reply('📊 No hay gastos ni deudas para hacer el corte.');
     }
 
     const userName1 = process.env.USER_NAME_1;
@@ -473,38 +523,56 @@ bot.command('corte', async (ctx) => {
     const otherUserId = initiatorId === AUTHORIZED_USERS[0] ? AUTHORIZED_USERS[1] : AUTHORIZED_USERS[0];
     const otherUserName = initiatorId === AUTHORIZED_USERS[0] ? userName2 : userName1;
 
-    // Activar confirmación pendiente
+    let previewMsg = '📋 *Vista previa del corte:*\n\n';
+
+    if (weekDoc && weekDoc.expenses.length > 0) {
+      previewMsg += `💰 Gastos compartidos: ${weekDoc.expenses.length}\n`;
+    }
+
+    if (debts.length > 0) {
+      previewMsg += `💳 Deudas individuales: ${debts.length}\n`;
+    }
+
+    previewMsg += '\nTodo será saldado al confirmar.';
+
     pendingReset.active = true;
     pendingReset.initiatedBy = initiatorId;
     pendingReset.timestamp = new Date();
 
-    // Mensaje al iniciador
     ctx.reply(
-        `✅ Solicitud de corte enviada.\n\n` +
-        `Esperando confirmación de *${otherUserName}*...\n\n` +
-        `Usa /cancelar para cancelar la solicitud.`,
-        { parse_mode: 'Markdown' }
+      `${previewMsg}\n\n` +
+      `✅ Solicitud de corte enviada.\n` +
+      `Esperando confirmación de *${otherUserName}*...\n\n` +
+      `Usa /cancelar para cancelar la solicitud.`,
+      { parse_mode: 'Markdown' }
     );
 
-    // Mensaje al otro usuario
     await bot.telegram.sendMessage(
-        otherUserId,
-        `🔔 *${initiatorName}* quiere hacer el corte semanal.\n\n` +
-        `¿Estás de acuerdo?\n\n` +
-        `• /si - Confirmar y hacer el corte\n` +
-        `• /no - Rechazar`,
-        { parse_mode: 'Markdown' }
+      otherUserId,
+      `${previewMsg}\n\n` +
+      `🔔 *${initiatorName}* quiere hacer el corte.\n\n` +
+      `¿Estás de acuerdo?\n\n` +
+      `• /si - Confirmar y hacer el corte\n` +
+      `• /no - Rechazar`,
+      { parse_mode: 'Markdown' }
     );
 
-    // Auto-cancelar después de 5 minutos
     clearPendingReset();
 
   } catch (error) {
-    console.error('Error en comando corte:', error);
+    console.error('Error in /corte command:', error);
     ctx.reply('❌ Hubo un error al procesar la solicitud.');
   }
 });
 
+/**
+ * /si — Confirms a pending corte request.
+ *
+ * Only the user who did NOT initiate the request can confirm it, ensuring
+ * mutual agreement. After confirmation, pendingReset is cleared before calling
+ * enviarResumenSemanal to avoid any re-entrancy issues if the summary function
+ * were somehow triggered again before it finishes.
+ */
 bot.command('si', async (ctx) => {
   try {
     if (!pendingReset.active) {
@@ -521,27 +589,30 @@ bot.command('si', async (ctx) => {
 
     ctx.reply('✅ Confirmado. Generando resumen y haciendo el corte...');
 
-    // Notificar al iniciador
     await bot.telegram.sendMessage(
         pendingReset.initiatedBy,
         `✅ *${confirmerName}* confirmó el corte. Generando resumen...`,
         { parse_mode: 'Markdown' }
     );
 
-    // Limpiar estado de confirmación
     pendingReset.active = false;
     pendingReset.initiatedBy = null;
     pendingReset.timestamp = null;
 
-    // Ejecutar resumen
     await enviarResumenSemanal();
 
   } catch (error) {
-    console.error('Error al confirmar corte:', error);
+    console.error('Error confirming corte:', error);
     ctx.reply('❌ Hubo un error al confirmar el corte.');
   }
 });
 
+/**
+ * /no — Rejects a pending corte request.
+ *
+ * Only the non-initiating user can reject; the initiator must use /cancelar.
+ * Both users are notified of the rejection so neither is left waiting.
+ */
 bot.command('no', async (ctx) => {
   try {
     if (!pendingReset.active) {
@@ -558,24 +629,28 @@ bot.command('no', async (ctx) => {
 
     ctx.reply('❌ Solicitud de corte rechazada.');
 
-    // Notificar al iniciador
     await bot.telegram.sendMessage(
         pendingReset.initiatedBy,
         `❌ *${rejecterName}* rechazó la solicitud de corte.`,
         { parse_mode: 'Markdown' }
     );
 
-    // Limpiar estado de confirmación
     pendingReset.active = false;
     pendingReset.initiatedBy = null;
     pendingReset.timestamp = null;
 
   } catch (error) {
-    console.error('Error al rechazar corte:', error);
+    console.error('Error rejecting corte:', error);
     ctx.reply('❌ Hubo un error al rechazar la solicitud.');
   }
 });
 
+/**
+ * /cancelar — Allows the initiator to withdraw their own corte request.
+ *
+ * Only the user who started the request can cancel it. The other user is
+ * notified so they know they no longer need to respond.
+ */
 bot.command('cancelar', async (ctx) => {
   try {
     if (!pendingReset.active) {
@@ -593,27 +668,37 @@ bot.command('cancelar', async (ctx) => {
 
     ctx.reply('✅ Solicitud de corte cancelada.');
 
-    // Notificar al otro usuario
     await bot.telegram.sendMessage(
         otherUserId,
         `ℹ️ *${initiatorName}* canceló la solicitud de corte.`,
         { parse_mode: 'Markdown' }
     );
 
-    // Limpiar estado de confirmación
     pendingReset.active = false;
     pendingReset.initiatedBy = null;
     pendingReset.timestamp = null;
 
   } catch (error) {
-    console.error('Error al cancelar solicitud:', error);
+    console.error('Error cancelling request:', error);
     ctx.reply('❌ Hubo un error al cancelar la solicitud.');
   }
 });
 
+/**
+ * /deuda — Records a one-sided debt from one user to the other.
+ *
+ * Format: /deuda <amount> <method> [<rate>] <description> <debtorName>
+ * The last token is always the name of the person who owes the money. If the
+ * method is "bs", the third token must be the exchange rate, and the description
+ * is everything between the rate and the debtor name.
+ *
+ * The amount is stored in USD regardless of the input currency so that the
+ * balance calculation in /resumen and /corte works with a single unit.
+ * Both users receive a confirmation message so the transaction is transparent.
+ */
 bot.command('deuda', async (ctx) => {
   try {
-    const args = ctx.message.text.split(' ').slice(1); // quitar "/deuda"
+    const args = ctx.message.text.split(' ').slice(1); // drop the "/deuda" token
 
     if (args.length < 4) {
       return ctx.reply(
@@ -643,7 +728,6 @@ bot.command('deuda', async (ctx) => {
     let debtorName = '';
 
     if (method === 'bs') {
-      // Necesita tasa
       if (args.length < 5) {
         return ctx.reply('❌ Falta la tasa de conversión para bs.');
       }
@@ -653,16 +737,11 @@ bot.command('deuda', async (ctx) => {
         return ctx.reply('❌ La tasa debe ser un número positivo.');
       }
 
-      // El último elemento es el nombre del deudor
       debtorName = args[args.length - 1];
-      // La descripción es todo lo del medio
       description = args.slice(3, -1).join(' ');
 
     } else {
-      // cash
-      // El último elemento es el nombre del deudor
       debtorName = args[args.length - 1];
-      // La descripción es todo lo del medio
       description = args.slice(2, -1).join(' ');
     }
 
@@ -670,7 +749,6 @@ bot.command('deuda', async (ctx) => {
       return ctx.reply('❌ Debes incluir una descripción.');
     }
 
-    // Identificar quién es el deudor
     const userName1 = process.env.USER_NAME_1;
     const userName2 = process.env.USER_NAME_2;
 
@@ -682,12 +760,12 @@ bot.command('deuda', async (ctx) => {
       debtorId = AUTHORIZED_USERS[0];
       creditorId = AUTHORIZED_USERS[1];
       creditorName = userName2;
-      debtorName = userName1; // normalizar capitalización
+      debtorName = userName1; // normalize capitalization
     } else if (debtorName.toLowerCase() === userName2.toLowerCase()) {
       debtorId = AUTHORIZED_USERS[1];
       creditorId = AUTHORIZED_USERS[0];
       creditorName = userName1;
-      debtorName = userName2; // normalizar capitalización
+      debtorName = userName2; // normalize capitalization
     } else {
       return ctx.reply(
           `❌ El usuario debe ser "${userName1}" o "${userName2}".`,
@@ -695,10 +773,9 @@ bot.command('deuda', async (ctx) => {
       );
     }
 
-    // Calcular monto en USD
+    // Convert to USD at entry time so the debt amount is always in a single currency.
     const amountUSD = method === 'cash' ? amount : amount / rate;
 
-    // Crear la deuda
     const debt = new Debt({
       debtorId,
       creditorId,
@@ -708,7 +785,6 @@ bot.command('deuda', async (ctx) => {
 
     await debt.save();
 
-    // Confirmar a ambos
     let confirmMsg = `💳 *DEUDA REGISTRADA*\n\n`;
     confirmMsg += `${debtorName} le debe $${amountUSD.toFixed(2)} a ${creditorName}\n`;
     if (method === 'bs') {
@@ -718,7 +794,7 @@ bot.command('deuda', async (ctx) => {
 
     ctx.reply(confirmMsg, { parse_mode: 'Markdown' });
 
-    // Notificar a la otra persona (si no es quien lo registró)
+    // Notify the other user regardless of who registered the debt.
     const otherUserId = ctx.from.id === AUTHORIZED_USERS[0] ? AUTHORIZED_USERS[1] : AUTHORIZED_USERS[0];
     await bot.telegram.sendMessage(
         otherUserId,
@@ -727,12 +803,19 @@ bot.command('deuda', async (ctx) => {
     );
 
   } catch (error) {
-    console.error('Error al registrar deuda:', error);
+    console.error('Error recording debt:', error);
     ctx.reply('❌ Hubo un error al registrar la deuda.');
   }
 });
 
-// Comando eliminardeuda - Eliminar una deuda (sin marcarla como pagada)
+/**
+ * /eliminardeuda N — Permanently deletes an individual debt (e.g. entered by mistake).
+ *
+ * This hard-deletes the document rather than marking it settled, so it will not
+ * appear in history. Both users are notified to keep the record transparent.
+ * Debt numbering is 1-based in user-facing output and derived from the query
+ * order, so debtNum - 1 is used to index into the result array.
+ */
 bot.command('eliminardeuda', async (ctx) => {
   try {
     const args = ctx.message.text.split(' ');
@@ -770,7 +853,6 @@ bot.command('eliminardeuda', async (ctx) => {
     const debtorName = debt.debtorId === AUTHORIZED_USERS[0] ? userName1 : userName2;
     const creditorName = debt.creditorId === AUTHORIZED_USERS[0] ? userName1 : userName2;
 
-    // Eliminar la deuda
     await Debt.deleteOne({ _id: debt._id });
 
     const confirmMsg =
@@ -778,16 +860,26 @@ bot.command('eliminardeuda', async (ctx) => {
         `${debtorName} → ${creditorName}: $${debt.amount.toFixed(2)}\n` +
         `📝 ${debt.description}`;
 
-    // Notificar a ambos
     for (const userId of AUTHORIZED_USERS) {
       await bot.telegram.sendMessage(userId, confirmMsg, { parse_mode: 'Markdown' });
     }
 
   } catch (error) {
-    console.error('Error al eliminar deuda:', error);
+    console.error('Error deleting debt:', error);
     ctx.reply('❌ Hubo un error al eliminar la deuda.');
   }
 });
+
+/**
+ * Text message handler — registers a new shared expense from a free-text message.
+ *
+ * Commands (messages starting with "/") are ignored here and handled by their
+ * respective bot.command() listeners. For all other text, the message is parsed
+ * by parseExpense and stored in the current open week document.
+ * If no open week document exists yet, a new one is created with the current
+ * week's start date so that the first expense of the week is always associated
+ * with the correct billing period.
+ */
 bot.on('text', async (ctx) => {
   if (ctx.message.text.startsWith('/')) {
     return;
@@ -811,7 +903,8 @@ bot.on('text', async (ctx) => {
     const { amount, method, rate, description, isProportional } = parsed;
     const amountUSD = calculateUSD(amount, method, rate);
 
-    // Buscar semana activa (no procesada) o crear una nueva
+    // Find the active (unprocessed) week document, or create one if this is
+    // the first expense of a new week.
     let weekDoc = await Expense.findOne({ processed: false }).sort({ weekStart: -1 });
 
     if (!weekDoc) {
@@ -823,7 +916,6 @@ bot.on('text', async (ctx) => {
       });
     }
 
-    // Agregar gasto
     weekDoc.expenses.push({
       userId: ctx.from.id,
       amount,
@@ -835,7 +927,6 @@ bot.on('text', async (ctx) => {
 
     await weekDoc.save();
 
-    // Mensaje de confirmación
     let confirmMsg = `✅ Gasto registrado:\n\n`;
     confirmMsg += `💰 ${amount} ${method.toUpperCase()}`;
     if (method === 'bs') {
@@ -847,17 +938,14 @@ bot.on('text', async (ctx) => {
     ctx.reply(confirmMsg);
 
   } catch (error) {
-    console.error('Error al registrar gasto:', error);
+    console.error('Error recording expense:', error);
     ctx.reply('❌ Hubo un error al registrar el gasto. Intenta de nuevo.');
   }
 });
 
-
-// Iniciar bot
 bot.launch();
-console.log('🤖 Bot iniciado correctamente');
+console.log('🤖 Bot started successfully');
 
-// Graceful stop
+// Graceful shutdown: stop polling cleanly on SIGINT/SIGTERM.
 process.once('SIGINT', () => bot.stop('SIGINT'));
 process.once('SIGTERM', () => bot.stop('SIGTERM'));
-
