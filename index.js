@@ -1,4 +1,5 @@
 require('dotenv').config();
+const express = require('express');
 const { Telegraf } = require('telegraf');
 const mongoose = require('mongoose');
 const Expense = require('./models/Expense');
@@ -945,6 +946,35 @@ bot.on('text', async (ctx) => {
 
 bot.launch();
 console.log('🤖 Bot started successfully');
+
+/**
+ * Minimal Express HTTP server for cloud deployment health checks.
+ *
+ * Cloud platforms (Railway, Render, Fly.io, etc.) require the process to bind
+ * a port to consider the deployment healthy. PORT is read from the environment
+ * so the platform can inject its own value; it falls back to 3000 for local runs.
+ *
+ * GET / returns a plain-text status message that identifies the bot without
+ * exposing any sensitive configuration.
+ */
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+app.get('/', (req, res) => {
+  res.send(
+    'Joeliano Gastos Bot 💸\n\n' +
+    'Comandos disponibles:\n' +
+    '  /resumen      — Ver gastos y deudas de la semana\n' +
+    '  /corte        — Solicitar cierre de semana\n' +
+    '  /deuda        — Registrar deuda individual\n' +
+    '  /eliminar N   — Eliminar un gasto\n' +
+    '  /ayuda        — Ver ayuda completa en Telegram'
+  );
+});
+
+app.listen(PORT, () => {
+  console.log(`🌐 HTTP server listening on port ${PORT}`);
+});
 
 // Graceful shutdown: stop polling cleanly on SIGINT/SIGTERM.
 process.once('SIGINT', () => bot.stop('SIGINT'));
