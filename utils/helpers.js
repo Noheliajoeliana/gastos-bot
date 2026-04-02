@@ -3,7 +3,7 @@ function getWeekStart() {
   const now = new Date();
   const dayOfWeek = now.getDay(); // 0 = domingo, 1 = lunes, etc.
 
-  let weekStart = new Date(now);
+  const weekStart = new Date(now);
   weekStart.setHours(19, 1, 0, 0);
 
   if (dayOfWeek === 0) {
@@ -52,8 +52,8 @@ function parseExpense(text) {
   }
 
   let rate = null;
-  let description = '';
-  let isProportional = false;
+  let description;
+  let isProportional;
 
   if (method === 'bs') {
     // Bolívars require an exchange rate as the third token.
