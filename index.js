@@ -74,9 +74,9 @@ async function enviarResumenSemanal() {
       console.log('No expenses or debts to process');
       for (const userId of AUTHORIZED_USERS) {
         await bot.telegram.sendMessage(
-            userId,
-            '📊 *RESUMEN SEMANAL*\n\nNo hubo gastos ni deudas esta semana. 🎉',
-            { parse_mode: 'Markdown' }
+          userId,
+          '📊 *RESUMEN SEMANAL*\n\nNo hubo gastos ni deudas esta semana. 🎉',
+          { parse_mode: 'Markdown' }
         );
       }
       return;
@@ -99,11 +99,11 @@ async function enviarResumenSemanal() {
 
     if (weekDoc && weekDoc.expenses.length > 0) {
       const summary = calculateSummary(
-          weekDoc.expenses,
-          AUTHORIZED_USERS[0],
-          AUTHORIZED_USERS[1],
-          proportion1,
-          proportion2
+        weekDoc.expenses,
+        AUTHORIZED_USERS[0],
+        AUTHORIZED_USERS[1],
+        proportion1,
+        proportion2
       );
 
       msg += `👤 *${userName1}* gastó: $${summary.total1.toFixed(2)}\n`;
@@ -125,7 +125,7 @@ async function enviarResumenSemanal() {
       msg += '\n';
       msg += `💰 *Total general:* $${summary.totalGeneral.toFixed(2)}\n\n`;
 
-      msg += `*Balance gastos compartidos:*\n`;
+      msg += '*Balance gastos compartidos:*\n';
       if (summary.balance > 0) {
         const deudor = summary.deudor === 'Usuario1' ? userName1 : userName2;
         const acreedor = summary.acreedor === 'Usuario1' ? userName1 : userName2;
@@ -148,8 +148,8 @@ async function enviarResumenSemanal() {
     let balance_deudas = 0;
 
     if (debts.length > 0) {
-      msg += `━━━━━━━━━━━━━━━━\n`;
-      msg += `💳 *DEUDAS INDIVIDUALES*\n\n`;
+      msg += '━━━━━━━━━━━━━━━━\n';
+      msg += '💳 *DEUDAS INDIVIDUALES*\n\n';
 
       let nohelia_debe = 0;
       let antonio_debe = 0;
@@ -169,7 +169,7 @@ async function enviarResumenSemanal() {
       });
 
       // Net the two sides to avoid counting mutual debts twice.
-      msg += `\n*Balance deudas individuales:*\n`;
+      msg += '\n*Balance deudas individuales:*\n';
       const balanceDeudas = Math.abs(nohelia_debe - antonio_debe);
       if (nohelia_debe > antonio_debe) {
         msg += `${userName1} debía $${balanceDeudas.toFixed(2)} a ${userName2}\n\n`;
@@ -178,7 +178,7 @@ async function enviarResumenSemanal() {
         msg += `${userName2} debía $${balanceDeudas.toFixed(2)} a ${userName1}\n\n`;
         balance_deudas = balanceDeudas; // user 2 owes → positive
       } else {
-        msg += `Estaban a mano 🎉\n\n`;
+        msg += 'Estaban a mano 🎉\n\n';
       }
     }
 
@@ -186,13 +186,13 @@ async function enviarResumenSemanal() {
     // Adding the two signed balances gives the combined net amount owed.
     // Math.abs(balance_total) < 0.01 is used instead of === 0 to guard against
     // floating-point rounding errors in USD amounts converted from bolívars.
-    msg += `━━━━━━━━━━━━━━━━\n`;
-    msg += `💵 *BALANCE TOTAL FINAL*\n\n`;
+    msg += '━━━━━━━━━━━━━━━━\n';
+    msg += '💵 *BALANCE TOTAL FINAL*\n\n';
 
     const balance_total = balance_gastos + balance_deudas;
 
     if (Math.abs(balance_total) < 0.01) {
-      msg += `*¡Están completamente a mano!* 🎉\n\n`;
+      msg += '*¡Están completamente a mano!* 🎉\n\n';
     } else if (balance_total > 0) {
       msg += `*${userName2}* le debe *$${Math.abs(balance_total).toFixed(2)}* a *${userName1}*\n\n`;
     } else {
@@ -216,13 +216,13 @@ async function enviarResumenSemanal() {
     // Bulk-settle all outstanding individual debts in a single DB operation.
     if (debts.length > 0) {
       await Debt.updateMany(
-          { settled: false },
-          {
-            $set: {
-              settled: true,
-              settledAt: new Date()
-            }
+        { settled: false },
+        {
+          $set: {
+            settled: true,
+            settledAt: new Date()
           }
+        }
       );
     }
 
@@ -234,8 +234,8 @@ async function enviarResumenSemanal() {
 }
 
 mongoose.connect(process.env.MONGODB_URI)
-    .then(() => console.log('✅ MongoDB connected'))
-    .catch(err => console.error('❌ MongoDB connection error:', err));
+  .then(() => console.log('✅ MongoDB connected'))
+  .catch(err => console.error('❌ MongoDB connection error:', err));
 
 /**
  * Authorization middleware — rejects all updates from users not in AUTHORIZED_USERS.
@@ -254,7 +254,7 @@ bot.command('start', (ctx) => {
 
 bot.command('ayuda', (ctx) => {
   ctx.reply(
-      '📝 *Cómo usar el bot:*\n\n' +
+    '📝 *Cómo usar el bot:*\n\n' +
       '*Registrar gastos:*\n' +
       '• 50/50: `20 cash supermercado`\n' +
       '• Proporcional: `20 cash supermercado proporcional`\n' +
@@ -271,7 +271,7 @@ bot.command('ayuda', (ctx) => {
       '• /cancelar - Cancelar solicitud\n' +
       '• /eliminar N - Eliminar gasto\n' +
       '• /ayuda - Ver esta ayuda',
-      { parse_mode: 'Markdown' }
+    { parse_mode: 'Markdown' }
   );
 });
 
@@ -303,11 +303,11 @@ bot.command('resumen', async (ctx) => {
     // ── SHARED EXPENSES ──────────────────────────────────────────────────────
     if (weekDoc && weekDoc.expenses.length > 0) {
       const summary = calculateSummary(
-          weekDoc.expenses,
-          AUTHORIZED_USERS[0],
-          AUTHORIZED_USERS[1],
-          proportion1,
-          proportion2
+        weekDoc.expenses,
+        AUTHORIZED_USERS[0],
+        AUTHORIZED_USERS[1],
+        proportion1,
+        proportion2
       );
 
       msg += `👤 *${userName1}* gastó: $${summary.total1.toFixed(2)}\n`;
@@ -329,7 +329,7 @@ bot.command('resumen', async (ctx) => {
       msg += '\n';
       msg += `💰 *Total general:* $${summary.totalGeneral.toFixed(2)}\n\n`;
 
-      msg += `*Balance gastos compartidos:*\n`;
+      msg += '*Balance gastos compartidos:*\n';
       if (summary.balance > 0) {
         const deudor = summary.deudor === 'Usuario1' ? userName1 : userName2;
         const acreedor = summary.acreedor === 'Usuario1' ? userName1 : userName2;
@@ -341,8 +341,8 @@ bot.command('resumen', async (ctx) => {
 
     // ── INDIVIDUAL DEBTS ─────────────────────────────────────────────────────
     if (debts.length > 0) {
-      msg += `━━━━━━━━━━━━━━━━\n`;
-      msg += `💳 *DEUDAS INDIVIDUALES*\n\n`;
+      msg += '━━━━━━━━━━━━━━━━\n';
+      msg += '💳 *DEUDAS INDIVIDUALES*\n\n';
 
       let nohelia_debe = 0;
       let antonio_debe = 0;
@@ -361,20 +361,20 @@ bot.command('resumen', async (ctx) => {
         }
       });
 
-      msg += `\n*Balance deudas individuales:*\n`;
+      msg += '\n*Balance deudas individuales:*\n';
       const balanceDeudas = Math.abs(nohelia_debe - antonio_debe);
       if (nohelia_debe > antonio_debe) {
         msg += `${userName1} debe $${balanceDeudas.toFixed(2)} a ${userName2}\n\n`;
       } else if (antonio_debe > nohelia_debe) {
         msg += `${userName2} debe $${balanceDeudas.toFixed(2)} a ${userName1}\n\n`;
       } else {
-        msg += `Están a mano 🎉\n\n`;
+        msg += 'Están a mano 🎉\n\n';
       }
     }
 
     // ── FINAL TOTAL ──────────────────────────────────────────────────────────
-    msg += `━━━━━━━━━━━━━━━━\n`;
-    msg += `💵 *BALANCE TOTAL*\n\n`;
+    msg += '━━━━━━━━━━━━━━━━\n';
+    msg += '💵 *BALANCE TOTAL*\n\n';
 
     let balance_gastos = 0;
     let balance_deudas = 0;
@@ -382,11 +382,11 @@ bot.command('resumen', async (ctx) => {
     // Re-compute the shared-expense balance for the final total section.
     if (weekDoc && weekDoc.expenses.length > 0) {
       const summary = calculateSummary(
-          weekDoc.expenses,
-          AUTHORIZED_USERS[0],
-          AUTHORIZED_USERS[1],
-          proportion1,
-          proportion2
+        weekDoc.expenses,
+        AUTHORIZED_USERS[0],
+        AUTHORIZED_USERS[1],
+        proportion1,
+        proportion2
       );
 
       if (summary.balance > 0) {
@@ -419,7 +419,7 @@ bot.command('resumen', async (ctx) => {
     const balance_total = balance_gastos + balance_deudas;
 
     if (Math.abs(balance_total) < 0.01) {
-      msg += `*¡Están completamente a mano!* 🎉`;
+      msg += '*¡Están completamente a mano!* 🎉';
     } else if (balance_total > 0) {
       msg += `*${userName2}* le debe *$${Math.abs(balance_total).toFixed(2)}* a *${userName1}*`;
     } else {
@@ -449,11 +449,11 @@ bot.command('eliminar', async (ctx) => {
 
     if (args.length < 2) {
       return ctx.reply(
-          '❌ Debes especificar el número del gasto.\n\n' +
+        '❌ Debes especificar el número del gasto.\n\n' +
           'Usa: `/eliminar N`\n' +
           'Ejemplo: `/eliminar 3`\n\n' +
           'Usa /resumen para ver los números de los gastos.',
-          { parse_mode: 'Markdown' }
+        { parse_mode: 'Markdown' }
       );
     }
 
@@ -475,9 +475,9 @@ bot.command('eliminar', async (ctx) => {
 
     const gastoEliminado = weekDoc.expenses[gastoNum - 1];
     const amountUSD = calculateUSD(
-        gastoEliminado.amount,
-        gastoEliminado.method,
-        gastoEliminado.rate
+      gastoEliminado.amount,
+      gastoEliminado.method,
+      gastoEliminado.rate
     );
 
     if (gastoEliminado.userId !== ctx.from.id) {
@@ -488,10 +488,10 @@ bot.command('eliminar', async (ctx) => {
     await weekDoc.save();
 
     ctx.reply(
-        `✅ *Gasto eliminado:*\n\n` +
+      '✅ *Gasto eliminado:*\n\n' +
         `💰 $${amountUSD.toFixed(2)}\n` +
         `📝 ${gastoEliminado.description}`,
-        { parse_mode: 'Markdown' }
+      { parse_mode: 'Markdown' }
     );
 
   } catch (error) {
@@ -542,9 +542,9 @@ bot.command('corte', async (ctx) => {
 
     ctx.reply(
       `${previewMsg}\n\n` +
-      `✅ Solicitud de corte enviada.\n` +
+      '✅ Solicitud de corte enviada.\n' +
       `Esperando confirmación de *${otherUserName}*...\n\n` +
-      `Usa /cancelar para cancelar la solicitud.`,
+      'Usa /cancelar para cancelar la solicitud.',
       { parse_mode: 'Markdown' }
     );
 
@@ -552,9 +552,9 @@ bot.command('corte', async (ctx) => {
       otherUserId,
       `${previewMsg}\n\n` +
       `🔔 *${initiatorName}* quiere hacer el corte.\n\n` +
-      `¿Estás de acuerdo?\n\n` +
-      `• /si - Confirmar y hacer el corte\n` +
-      `• /no - Rechazar`,
+      '¿Estás de acuerdo?\n\n' +
+      '• /si - Confirmar y hacer el corte\n' +
+      '• /no - Rechazar',
       { parse_mode: 'Markdown' }
     );
 
@@ -591,9 +591,9 @@ bot.command('si', async (ctx) => {
     ctx.reply('✅ Confirmado. Generando resumen y haciendo el corte...');
 
     await bot.telegram.sendMessage(
-        pendingReset.initiatedBy,
-        `✅ *${confirmerName}* confirmó el corte. Generando resumen...`,
-        { parse_mode: 'Markdown' }
+      pendingReset.initiatedBy,
+      `✅ *${confirmerName}* confirmó el corte. Generando resumen...`,
+      { parse_mode: 'Markdown' }
     );
 
     pendingReset.active = false;
@@ -631,9 +631,9 @@ bot.command('no', async (ctx) => {
     ctx.reply('❌ Solicitud de corte rechazada.');
 
     await bot.telegram.sendMessage(
-        pendingReset.initiatedBy,
-        `❌ *${rejecterName}* rechazó la solicitud de corte.`,
-        { parse_mode: 'Markdown' }
+      pendingReset.initiatedBy,
+      `❌ *${rejecterName}* rechazó la solicitud de corte.`,
+      { parse_mode: 'Markdown' }
     );
 
     pendingReset.active = false;
@@ -670,9 +670,9 @@ bot.command('cancelar', async (ctx) => {
     ctx.reply('✅ Solicitud de corte cancelada.');
 
     await bot.telegram.sendMessage(
-        otherUserId,
-        `ℹ️ *${initiatorName}* canceló la solicitud de corte.`,
-        { parse_mode: 'Markdown' }
+      otherUserId,
+      `ℹ️ *${initiatorName}* canceló la solicitud de corte.`,
+      { parse_mode: 'Markdown' }
     );
 
     pendingReset.active = false;
@@ -703,13 +703,13 @@ bot.command('deuda', async (ctx) => {
 
     if (args.length < 4) {
       return ctx.reply(
-          '❌ Formato incorrecto.\n\n' +
+        '❌ Formato incorrecto.\n\n' +
           '*Uso:* `/deuda monto método [tasa] descripción usuario`\n\n' +
           '*Ejemplos:*\n' +
           '• `/deuda 50 cash préstamo gasolina Nohelia`\n' +
           '• `/deuda 1200 bs 60 préstamo Antonio`\n\n' +
           'El usuario al final indica quién DEBE el dinero.',
-          { parse_mode: 'Markdown' }
+        { parse_mode: 'Markdown' }
       );
     }
 
@@ -769,8 +769,8 @@ bot.command('deuda', async (ctx) => {
       debtorName = userName2; // normalize capitalization
     } else {
       return ctx.reply(
-          `❌ El usuario debe ser "${userName1}" o "${userName2}".`,
-          { parse_mode: 'Markdown' }
+        `❌ El usuario debe ser "${userName1}" o "${userName2}".`,
+        { parse_mode: 'Markdown' }
       );
     }
 
@@ -786,7 +786,7 @@ bot.command('deuda', async (ctx) => {
 
     await debt.save();
 
-    let confirmMsg = `💳 *DEUDA REGISTRADA*\n\n`;
+    let confirmMsg = '💳 *DEUDA REGISTRADA*\n\n';
     confirmMsg += `${debtorName} le debe $${amountUSD.toFixed(2)} a ${creditorName}\n`;
     if (method === 'bs') {
       confirmMsg += `(${amount} bs a tasa ${rate})\n`;
@@ -798,9 +798,9 @@ bot.command('deuda', async (ctx) => {
     // Notify the other user regardless of who registered the debt.
     const otherUserId = ctx.from.id === AUTHORIZED_USERS[0] ? AUTHORIZED_USERS[1] : AUTHORIZED_USERS[0];
     await bot.telegram.sendMessage(
-        otherUserId,
-        confirmMsg,
-        { parse_mode: 'Markdown' }
+      otherUserId,
+      confirmMsg,
+      { parse_mode: 'Markdown' }
     );
 
   } catch (error) {
@@ -823,11 +823,11 @@ bot.command('eliminardeuda', async (ctx) => {
 
     if (args.length < 2) {
       return ctx.reply(
-          '❌ Debes especificar el número de la deuda.\n\n' +
+        '❌ Debes especificar el número de la deuda.\n\n' +
           'Usa: `/eliminardeuda N`\n' +
           'Ejemplo: `/eliminardeuda 1`\n\n' +
           'Usa /deudas para ver los números.',
-          { parse_mode: 'Markdown' }
+        { parse_mode: 'Markdown' }
       );
     }
 
@@ -857,7 +857,7 @@ bot.command('eliminardeuda', async (ctx) => {
     await Debt.deleteOne({ _id: debt._id });
 
     const confirmMsg =
-        `🗑️ *DEUDA ELIMINADA*\n\n` +
+        '🗑️ *DEUDA ELIMINADA*\n\n' +
         `${debtorName} → ${creditorName}: $${debt.amount.toFixed(2)}\n` +
         `📝 ${debt.description}`;
 
@@ -891,13 +891,13 @@ bot.on('text', async (ctx) => {
 
     if (!parsed) {
       return ctx.reply(
-          '❌ Formato incorrecto.\n\n' +
+        '❌ Formato incorrecto.\n\n' +
           'Usa:\n' +
           '• `20 cash supermercado`\n' +
           '• `20 cash supermercado proporcional`\n' +
           '• `1200 bs 60 restaurante`\n' +
           '• `1200 bs 60 restaurante proporcional`',
-          { parse_mode: 'Markdown' }
+        { parse_mode: 'Markdown' }
       );
     }
 
@@ -928,7 +928,7 @@ bot.on('text', async (ctx) => {
 
     await weekDoc.save();
 
-    let confirmMsg = `✅ Gasto registrado:\n\n`;
+    let confirmMsg = '✅ Gasto registrado:\n\n';
     confirmMsg += `💰 ${amount} ${method.toUpperCase()}`;
     if (method === 'bs') {
       confirmMsg += ` (tasa: ${rate}) = $${amountUSD.toFixed(2)}`;
