@@ -944,21 +944,14 @@ bot.on('text', async (ctx) => {
   }
 });
 
-bot.launch();
-console.log('🤖 Bot started successfully');
-
-/**
- * Minimal Express HTTP server for cloud deployment health checks.
- *
- * Cloud platforms (Railway, Render, Fly.io, etc.) require the process to bind
- * a port to consider the deployment healthy. PORT is read from the environment
- * so the platform can inject its own value; it falls back to 3000 for local runs.
- *
- * GET / returns a plain-text status message that identifies the bot without
- * exposing any sensitive configuration.
- */
 const app = express();
 const PORT = process.env.PORT || 3000;
+const WEBHOOK_DOMAIN = process.env.WEBHOOK_DOMAIN;
+
+if (WEBHOOK_DOMAIN) {
+  const webhookPath = `/telegraf/${bot.secretPathComponent()}`;
+  app.use(bot.webhookCallback(webhookPath));
+}
 
 app.get('/', (req, res) => {
   res.send(
@@ -972,10 +965,17 @@ app.get('/', (req, res) => {
   );
 });
 
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
   console.log(`🌐 HTTP server listening on port ${PORT}`);
+  if (WEBHOOK_DOMAIN) {
+    const webhookPath = `/telegraf/${bot.secretPathComponent()}`;
+    await bot.telegram.setWebhook(`${WEBHOOK_DOMAIN}${webhookPath}`);
+    console.log('🤖 Bot started in webhook mode');
+  } else {
+    bot.launch();
+    console.log('🤖 Bot started in long-polling mode');
+  }
 });
 
-// Graceful shutdown: stop polling cleanly on SIGINT/SIGTERM.
 process.once('SIGINT', () => bot.stop('SIGINT'));
 process.once('SIGTERM', () => bot.stop('SIGTERM'));

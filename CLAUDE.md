@@ -7,9 +7,9 @@ Bot de Telegram para rastrear y saldar gastos compartidos y deudas individuales 
 ## Stack
 
 - **Runtime**: Node.js 18+
-- **Framework del bot**: Telegraf v4 (long-polling, sin webhooks)
+- **Framework del bot**: Telegraf v4 (webhooks en produccion, long-polling en local)
 - **Base de datos**: MongoDB via Mongoose v9
-- **Deployment**: Render (Express en el puerto `PORT` para health checks)
+- **Deployment**: Render (Express en el puerto `PORT` para health checks y webhook)
 - **Testing**: Jest (pendiente de implementar)
 - **Linter**: ESLint
 
@@ -72,6 +72,7 @@ USER_NAME_2         # Nombre del usuario 2
 USER_PROPORTION_1   # Proporcion de ingresos usuario 1 (ej: 0.41)
 USER_PROPORTION_2   # Proporcion de ingresos usuario 2 (ej: 0.59)
 PORT                # Puerto para el servidor Express (default: 3000)
+WEBHOOK_DOMAIN      # Dominio publico para webhook de Telegram (ej: https://bot-gastos.onrender.com). Si no se define, usa long-polling.
 ```
 
 ## Comandos del bot
