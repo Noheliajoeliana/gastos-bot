@@ -109,7 +109,8 @@ async function enviarResumenSemanal() {
       msg += `👤 *${userName1}* gastó: $${summary.total1.toFixed(2)}\n`;
       summary.expenses1.forEach((exp, i) => {
         const tipo = exp.isProporcional ? ' 📊' : ' ⚖️';
-        msg += `  ${i + 1}.${tipo} $${exp.amountUSD.toFixed(2)} - ${exp.description}\n`;
+        const fecha = exp.date ? new Date(exp.date).toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit' }) : '';
+        msg += `  ${i + 1}.${tipo} $${exp.amountUSD.toFixed(2)} - ${exp.description}${fecha ? ` (${fecha})` : ''}\n`;
       });
       msg += `  _Debía pagar: $${summary.debeUser1.toFixed(2)}_\n`;
 
@@ -118,7 +119,8 @@ async function enviarResumenSemanal() {
       msg += `👤 *${userName2}* gastó: $${summary.total2.toFixed(2)}\n`;
       summary.expenses2.forEach((exp, i) => {
         const tipo = exp.isProporcional ? ' 📊' : ' ⚖️';
-        msg += `  ${i + 1}.${tipo} $${exp.amountUSD.toFixed(2)} - ${exp.description}\n`;
+        const fecha = exp.date ? new Date(exp.date).toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit' }) : '';
+        msg += `  ${i + 1}.${tipo} $${exp.amountUSD.toFixed(2)} - ${exp.description}${fecha ? ` (${fecha})` : ''}\n`;
       });
       msg += `  _Debía pagar: $${summary.debeUser2.toFixed(2)}_\n`;
 
@@ -313,7 +315,8 @@ bot.command('resumen', async (ctx) => {
       msg += `👤 *${userName1}* gastó: $${summary.total1.toFixed(2)}\n`;
       summary.expenses1.forEach(exp => {
         const tipo = exp.isProportional ? ' 📊' : ' ⚖️';
-        msg += `  ${exp.num}.${tipo} $${exp.amountUSD.toFixed(2)} - ${exp.description}\n`;
+        const fecha = exp.date ? new Date(exp.date).toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit' }) : '';
+        msg += `  ${exp.num}.${tipo} $${exp.amountUSD.toFixed(2)} - ${exp.description}${fecha ? ` (${fecha})` : ''}\n`;
       });
       msg += `  _Debe pagar: $${summary.debeUser1.toFixed(2)}_\n`;
 
@@ -322,7 +325,8 @@ bot.command('resumen', async (ctx) => {
       msg += `👤 *${userName2}* gastó: $${summary.total2.toFixed(2)}\n`;
       summary.expenses2.forEach(exp => {
         const tipo = exp.isProportional ? ' 📊' : ' ⚖️';
-        msg += `  ${exp.num}.${tipo} $${exp.amountUSD.toFixed(2)} - ${exp.description}\n`;
+        const fecha = exp.date ? new Date(exp.date).toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit' }) : '';
+        msg += `  ${exp.num}.${tipo} $${exp.amountUSD.toFixed(2)} - ${exp.description}${fecha ? ` (${fecha})` : ''}\n`;
       });
       msg += `  _Debe pagar: $${summary.debeUser2.toFixed(2)}_\n`;
 
