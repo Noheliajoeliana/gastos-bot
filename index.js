@@ -159,8 +159,9 @@ async function enviarResumenSemanal() {
       debts.forEach((debt, index) => {
         const debtorName = debt.debtorId === AUTHORIZED_USERS[0] ? userName1 : userName2;
         const creditorName = debt.creditorId === AUTHORIZED_USERS[0] ? userName1 : userName2;
+        const fecha = debt.createdAt ? new Date(debt.createdAt).toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit' }) : '';
 
-        msg += `${index + 1}. ${debtorName} → ${creditorName}: $${debt.amount.toFixed(2)}\n`;
+        msg += `${index + 1}. ${debtorName} → ${creditorName}: $${debt.amount.toFixed(2)}${fecha ? ` (${fecha})` : ''}\n`;
         msg += `   📝 ${debt.description}\n`;
 
         if (debt.debtorId === AUTHORIZED_USERS[0]) {
@@ -354,8 +355,9 @@ bot.command('resumen', async (ctx) => {
       debts.forEach((debt, index) => {
         const debtorName = debt.debtorId === AUTHORIZED_USERS[0] ? userName1 : userName2;
         const creditorName = debt.creditorId === AUTHORIZED_USERS[0] ? userName1 : userName2;
+        const fecha = debt.createdAt ? new Date(debt.createdAt).toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit' }) : '';
 
-        msg += `${index + 1}. ${debtorName} → ${creditorName}: $${debt.amount.toFixed(2)}\n`;
+        msg += `${index + 1}. ${debtorName} → ${creditorName}: $${debt.amount.toFixed(2)}${fecha ? ` (${fecha})` : ''}\n`;
         msg += `   📝 ${debt.description}\n`;
 
         if (debt.debtorId === AUTHORIZED_USERS[0]) {
