@@ -181,19 +181,21 @@ async function askConfirm(ctx) {
 
   const lines = [
     `💳 *Cuenta:* ${account.name} (${account.owner.name})`,
-    `💵 *Monto:* ${fmt(data.amount)} ${data.currency}${data.currency !== 'USD' ? ` = $${fmt(data.amountUSD)} USD` : ''}`,
+    `💵 *Total pagado:* ${fmt(data.amount)} ${data.currency}${data.currency !== 'USD' ? ` = $${fmt(data.amountUSD)} USD` : ''}`,
   ];
 
   if (data.isShared) {
-    lines.push(`👥 *Compartido:* ${splitLabel}`);
+    const debt = calculateDebt(account.owner._id, data.amountUSD, data.splitType, ctx.users.nohelia, ctx.users.antonio);
+    const payerPortion = data.amountUSD - debt.debtAmount;
     const catN = data.categoryNId ? await Category.findById(data.categoryNId) : null;
     const catA = data.categoryAId ? await Category.findById(data.categoryAId) : null;
-    if (catN) lines.push(`🏷️ *Cat. ${ctx.users.nohelia.name}:* ${catN.name}`);
-    if (catA) lines.push(`🏷️ *Cat. ${ctx.users.antonio.name}:* ${catA.name}`);
-    const debt = calculateDebt(account.owner._id, data.amountUSD, data.splitType, ctx.users.nohelia, ctx.users.antonio);
     const debtor = debt.debtDirection === 'toHim' ? ctx.users.nohelia.name : ctx.users.antonio.name;
     const creditor = debt.debtDirection === 'toHim' ? ctx.users.antonio.name : ctx.users.nohelia.name;
-    lines.push(`💸 *Deuda:* ${debtor} debe $${fmt(debt.debtAmount)} a ${creditor}`);
+    lines.push(`👥 *Compartido:* ${splitLabel}`);
+    lines.push(`💵 *Gasto de ${account.owner.name}:* $${fmt(payerPortion)} USD`);
+    lines.push(`💸 *Deuda de ${debtor}:* $${fmt(debt.debtAmount)} USD → ${creditor}`);
+    if (catN) lines.push(`🏷️ *Cat. ${ctx.users.nohelia.name}:* ${catN.name}`);
+    if (catA) lines.push(`🏷️ *Cat. ${ctx.users.antonio.name}:* ${catA.name}`);
   } else {
     const expenseOwner = data.expenseOwnerId ? await User.findById(data.expenseOwnerId) : account.owner;
     const cat = data.categoryId ? await Category.findById(data.categoryId) : null;
@@ -231,10 +233,12 @@ async function confirmGasto(ctx) {
 
   if (data.isShared) {
     const debt = calculateDebt(account.owner._id, data.amountUSD, data.splitType, nohelia, antonio);
+    const payerAmountUSD = data.amountUSD - debt.debtAmount; // payer's own portion only
 
-    // Main transaction: payer's account, full amount, debt info
+    // Main transaction: payer's portion only (not the full amount)
     await Transaction.create({
       ...base,
+      amountUSD: payerAmountUSD,
       owner: account.owner._id,
       category: account.owner._id.equals(nohelia._id) ? data.categoryNId : data.categoryAId,
       isShared: true,
@@ -245,7 +249,7 @@ async function confirmGasto(ctx) {
       debtAmount: debt.debtAmount,
     });
 
-    // Budget transaction for the other user (their portion, no debt impact)
+    // Budget transaction for the other user (their portion)
     const otherCategoryId = account.owner._id.equals(nohelia._id) ? data.categoryAId : data.categoryNId;
     const otherId = account.owner._id.equals(nohelia._id) ? antonio._id : nohelia._id;
     if (otherCategoryId) {
