@@ -103,21 +103,66 @@ async function showPeriod(ctx) {
 
   if (txs.length === 0) return ctx.reply(`📅 No hay movimientos desde el ${formatDate(period.startDate)}.`);
 
+  const { nohelia, antonio } = ctx.users;
+  const lines = [`📅 *Resumen del periodo*\n_Desde ${formatDate(period.startDate)}_\n`];
+
+  // ── Movimientos por categoría ──────────────────────────────────────────────
   const byCategory = {};
   for (const tx of txs) {
     const key = tx.category ? tx.category.name : tx.type === 'transfer' ? '🔄 Transferencias' : 'Sin categoría';
     const owner = tx.owner ? tx.owner.name : '';
-    const label = `${key}${owner ? ` (${owner})` : ''}`;
-    if (!byCategory[label]) byCategory[label] = { total: 0, txs: [] };
+    const label = `${key} (${owner})`;
+    if (!byCategory[label]) byCategory[label] = { total: 0, items: [] };
     byCategory[label].total += tx.amountUSD;
     const note = tx.note ? ` — ${tx.note}` : '';
-    byCategory[label].txs.push(`    ${formatDate(tx.date)} $${fmt(tx.amountUSD)}${note}`);
+    byCategory[label].items.push(`    ${formatDate(tx.date)} $${fmt(tx.amountUSD)}${note}`);
   }
 
-  const lines = [`📅 *Resumen del periodo*\n_Desde ${formatDate(period.startDate)}_\n`];
-  for (const [cat, { total, txs: catTxs }] of Object.entries(byCategory)) {
+  for (const [cat, { total, items }] of Object.entries(byCategory)) {
     lines.push(`*${cat}:* $${fmt(total)}`);
-    lines.push(...catTxs);
+    lines.push(...items);
+  }
+
+  // ── Deudas generadas por gastos compartidos ────────────────────────────────
+  const sharedTxs = txs.filter(tx => tx.isShared && tx.debtAmount > 0);
+
+  if (sharedTxs.length > 0) {
+    lines.push('');
+    lines.push('━━━━━━━━━━━━━━━━');
+    lines.push('💸 *Deudas por gastos compartidos*\n');
+
+    const toHim = sharedTxs.filter(tx => tx.debtDirection === 'toHim');
+    const toHer = sharedTxs.filter(tx => tx.debtDirection === 'toHer');
+
+    if (toHim.length > 0) {
+      const total = toHim.reduce((s, tx) => s + tx.debtAmount, 0);
+      lines.push(`👤 *${nohelia.name} debe a ${antonio.name}:* $${fmt(total)}`);
+      for (const tx of toHim) {
+        const concept = tx.note || (tx.category ? tx.category.name : 'Sin concepto');
+        lines.push(`    ${formatDate(tx.date)} $${fmt(tx.debtAmount)} — ${concept}`);
+      }
+    }
+
+    if (toHer.length > 0) {
+      if (toHim.length > 0) lines.push('');
+      const total = toHer.reduce((s, tx) => s + tx.debtAmount, 0);
+      lines.push(`👤 *${antonio.name} debe a ${nohelia.name}:* $${fmt(total)}`);
+      for (const tx of toHer) {
+        const concept = tx.note || (tx.category ? tx.category.name : 'Sin concepto');
+        lines.push(`    ${formatDate(tx.date)} $${fmt(tx.debtAmount)} — ${concept}`);
+      }
+    }
+
+    const netPeriod = toHim.reduce((s, tx) => s + tx.debtAmount, 0)
+                    - toHer.reduce((s, tx) => s + tx.debtAmount, 0);
+    lines.push('');
+    if (Math.abs(netPeriod) < 0.01) {
+      lines.push('📊 *Neto del periodo:* a mano 🎉');
+    } else if (netPeriod > 0) {
+      lines.push(`📊 *Neto del periodo:* ${nohelia.name} debe $${fmt(netPeriod)} a ${antonio.name}`);
+    } else {
+      lines.push(`📊 *Neto del periodo:* ${antonio.name} debe $${fmt(Math.abs(netPeriod))} a ${nohelia.name}`);
+    }
   }
 
   const msg = lines.join('\n');
