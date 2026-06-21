@@ -27,8 +27,9 @@ async function askFromAccount(ctx, payer) {
   const accounts = await Account.find({ owner: payer._id, isActive: true });
   updateSession(ctx.chat.id, { step: 'selectFrom' });
   const buttons = accounts.map(a => [Markup.button.callback(`${a.name} ($${fmt(a.balance)})`, `pp:frm:${a._id}`)]);
+  buttons.push([Markup.button.callback('🌐 Otro (cuenta externa)', 'pp:frm:ext')]);
   buttons.push([CANCEL_BTN]);
-  await ctx.reply(`📤 *¿De qué cuenta de ${payer.name}?*`, { parse_mode: 'Markdown', ...Markup.inlineKeyboard(buttons) });
+  await ctx.reply(`📤 *¿De qué cuenta de ${payer.name} sale el pago?*`, { parse_mode: 'Markdown', ...Markup.inlineKeyboard(buttons) });
 }
 
 async function askToAccount(ctx, receiver) {
@@ -50,12 +51,12 @@ async function askNote(ctx) {
 async function askConfirm(ctx) {
   const { data } = getSession(ctx.chat.id);
   const loan = await Loan.findById(data.loanId);
-  const from = await Account.findById(data.fromId);
+  const from = data.fromId ? await Account.findById(data.fromId) : null;
   const to = await Account.findById(data.toId);
   const newRemaining = Math.max(0, loan.remainingAmountUSD - data.amountUSD);
   const lines = [
     `💵 *Monto:* ${fmt(data.amount)} ${data.currency}${data.currency !== 'USD' ? ` → $${fmt(data.amountUSD)} USD` : ''}`,
-    `📤 *Desde:* ${from.name}`,
+    `📤 *Desde:* ${from ? from.name : 'Cuenta externa'}`,
     `📥 *Hacia:* ${to.name}`,
     `📊 *Saldo restante:* $${fmt(newRemaining)} USD`,
   ];
@@ -108,7 +109,8 @@ function register(bot) {
     }
 
     if (action === 'frm') {
-      updateSession(ctx.chat.id, { data: { ...getSession(ctx.chat.id).data, fromId: value } });
+      const fromId = value === 'ext' ? null : value;
+      updateSession(ctx.chat.id, { data: { ...getSession(ctx.chat.id).data, fromId } });
       const s = getSession(ctx.chat.id);
       const receiver = s.data.receiverId.equals(ctx.users.nohelia._id) ? ctx.users.nohelia : ctx.users.antonio;
       await askToAccount(ctx, receiver);
@@ -147,7 +149,7 @@ function register(bot) {
         remainingAmountUSD: newRemainingUSD,
         status: newRemainingUSD < 0.01 ? 'settled' : 'active',
       });
-      await updateAccountBalance(data.fromId, -data.amountUSD);
+      if (data.fromId) await updateAccountBalance(data.fromId, -data.amountUSD);
       await updateAccountBalance(data.toId, data.amountUSD);
       clearSession(ctx.chat.id);
       const settled = newRemainingUSD < 0.01;

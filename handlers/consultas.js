@@ -97,77 +97,83 @@ async function showPeriod(ctx) {
 
   const txs = await Transaction.find({ date: { $gte: period.startDate } })
     .populate('category')
-    .populate('account')
+    .populate({ path: 'account', populate: { path: 'owner' } })
+    .populate({ path: 'toAccount', populate: { path: 'owner' } })
     .populate('owner')
     .sort({ date: 1 });
 
-  if (txs.length === 0) return ctx.reply(`📅 No hay movimientos desde el ${formatDate(period.startDate)}.`);
-
   const { nohelia, antonio } = ctx.users;
-  const lines = [`📅 *Resumen del periodo*\n_Desde ${formatDate(period.startDate)}_\n`];
+  const lines = [`📅 *Resumen del periodo*\n_Desde ${formatDate(period.startDate)}_`];
 
-  // ── Movimientos por categoría ──────────────────────────────────────────────
-  const byCategory = {};
-  for (const tx of txs) {
-    const key = tx.category ? tx.category.name : tx.type === 'transfer' ? '🔄 Transferencias' : 'Sin categoría';
-    const owner = tx.owner ? tx.owner.name : '';
-    const label = `${key} (${owner})`;
-    if (!byCategory[label]) byCategory[label] = { total: 0, items: [] };
-    byCategory[label].total += tx.amountUSD;
-    const note = tx.note ? ` — ${tx.note}` : '';
-    byCategory[label].items.push(`    ${formatDate(tx.date)} $${fmt(tx.amountUSD)}${note}`);
-  }
+  function buildUserSection(user) {
+    const section = [];
+    const nonTransfers = txs.filter(tx => tx.type !== 'transfer' && tx.owner && tx.owner._id.equals(user._id));
+    const transfers = txs.filter(tx =>
+      tx.type === 'transfer' && tx.account && tx.account.owner && tx.account.owner._id.equals(user._id)
+    );
 
-  for (const [cat, { total, items }] of Object.entries(byCategory)) {
-    lines.push(`*${cat}:* $${fmt(total)}`);
-    lines.push(...items);
-  }
+    const byCategory = {};
+    for (const tx of nonTransfers) {
+      const catName = tx.category ? tx.category.name : (tx.type === 'income' ? 'Ingresos sin categoría' : 'Sin categoría');
+      if (!byCategory[catName]) byCategory[catName] = { total: 0, items: [] };
+      byCategory[catName].total += tx.amountUSD;
+      const note = tx.note ? ` — ${tx.note}` : '';
+      byCategory[catName].items.push(`    ${formatDate(tx.date)} $${fmt(tx.amountUSD)}${note}`);
+    }
 
-  // ── Deudas generadas por gastos compartidos ────────────────────────────────
-  const sharedTxs = txs.filter(tx => tx.isShared && tx.debtAmount > 0);
+    for (const [cat, { total, items }] of Object.entries(byCategory)) {
+      section.push(`  🏷 *${cat}:* $${fmt(total)}`);
+      section.push(...items);
+    }
 
-  if (sharedTxs.length > 0) {
-    lines.push('');
-    lines.push('━━━━━━━━━━━━━━━━');
-    lines.push('💸 *Deudas por gastos compartidos*\n');
-
-    const toHim = sharedTxs.filter(tx => tx.debtDirection === 'toHim');
-    const toHer = sharedTxs.filter(tx => tx.debtDirection === 'toHer');
-
-    if (toHim.length > 0) {
-      const total = toHim.reduce((s, tx) => s + tx.debtAmount, 0);
-      lines.push(`👤 *${nohelia.name} debe a ${antonio.name}:* $${fmt(total)}`);
-      for (const tx of toHim) {
-        const concept = tx.note || (tx.category ? tx.category.name : 'Sin concepto');
-        lines.push(`    ${formatDate(tx.date)} $${fmt(tx.debtAmount)} — ${concept}`);
+    if (transfers.length > 0) {
+      if (section.length > 0) section.push('');
+      section.push('  🔄 *Transferencias:*');
+      for (const tx of transfers) {
+        const dest = tx.toAccount ? `${tx.toAccount.name} (${tx.toAccount.owner ? tx.toAccount.owner.name : '?'})` : '?';
+        const note = tx.note ? ` — ${tx.note}` : '';
+        section.push(`    ${formatDate(tx.date)} $${fmt(tx.amountUSD)} → ${dest}${note}`);
       }
     }
 
-    if (toHer.length > 0) {
-      if (toHim.length > 0) lines.push('');
-      const total = toHer.reduce((s, tx) => s + tx.debtAmount, 0);
-      lines.push(`👤 *${antonio.name} debe a ${nohelia.name}:* $${fmt(total)}`);
-      for (const tx of toHer) {
-        const concept = tx.note || (tx.category ? tx.category.name : 'Sin concepto');
-        lines.push(`    ${formatDate(tx.date)} $${fmt(tx.debtAmount)} — ${concept}`);
-      }
-    }
+    return section;
+  }
 
-    const netPeriod = toHim.reduce((s, tx) => s + tx.debtAmount, 0)
-                    - toHer.reduce((s, tx) => s + tx.debtAmount, 0);
-    lines.push('');
-    if (Math.abs(netPeriod) < 0.01) {
-      lines.push('📊 *Neto del periodo:* a mano 🎉');
-    } else if (netPeriod > 0) {
-      lines.push(`📊 *Neto del periodo:* ${nohelia.name} debe $${fmt(netPeriod)} a ${antonio.name}`);
-    } else {
-      lines.push(`📊 *Neto del periodo:* ${antonio.name} debe $${fmt(Math.abs(netPeriod))} a ${nohelia.name}`);
+  // 1. Antonio
+  lines.push('');
+  lines.push(`👤 *${antonio.name}*`);
+  const antonioLines = buildUserSection(antonio);
+  lines.push(...(antonioLines.length > 0 ? antonioLines : ['  _sin movimientos_']));
+
+  // 2. Nohelia
+  lines.push('');
+  lines.push(`👤 *${nohelia.name}*`);
+  const noheliaLines = buildUserSection(nohelia);
+  lines.push(...(noheliaLines.length > 0 ? noheliaLines : ['  _sin movimientos_']));
+
+  // 3. Préstamos activos
+  const loans = await Loan.find({ status: 'active' });
+  lines.push('');
+  lines.push('🤝 *Préstamos activos*');
+  if (loans.length === 0) {
+    lines.push('  _ninguno_');
+  } else {
+    for (const loan of loans) {
+      const lender = loan.direction === 'himToHer' ? nohelia.name : antonio.name;
+      const borrower = loan.direction === 'himToHer' ? antonio.name : nohelia.name;
+      const noteStr = loan.note ? ` — ${loan.note}` : '';
+      lines.push(`  • ${lender} → ${borrower}: *$${fmt(loan.remainingAmountUSD)}* pendiente${noteStr}`);
     }
   }
+
+  // 4. Deuda neta global
+  const bal = await calculateNetBalance();
+  lines.push('');
+  lines.push(`💸 *Deuda neta:* ${netBalanceText(bal)}`);
 
   const msg = lines.join('\n');
   if (msg.length > 4000) {
-    await ctx.reply(msg.substring(0, 4000) + '\n…_(truncado)_', { parse_mode: 'Markdown' });
+    await ctx.reply(msg.substring(0, 4000) + '\n_…(truncado)_', { parse_mode: 'Markdown' });
   } else {
     await ctx.reply(msg, { parse_mode: 'Markdown', ...Markup.inlineKeyboard([[MENU_BTN]]) });
   }

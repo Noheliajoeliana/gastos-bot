@@ -8,12 +8,12 @@ const Period = require('./models/Period');
 // ── FILL THESE BEFORE RUNNING ────────────────────────────────────────────────
 
 const accounts = [
-  { name: 'Banco Azteca', ownerName: 'Antonio', balance: 24, originalCurrency: 'MXN' },
-  { name: 'Facebank',     ownerName: 'Antonio', balance: 145, originalCurrency: 'USD' },
-  { name: 'Efectivo',     ownerName: 'Antonio', balance: 20.85, originalCurrency: 'MXN' },
+  { name: 'Banco Azteca', ownerName: 'Antonio', balance: 20.72, originalCurrency: 'MXN' },
+  { name: 'Facebank',     ownerName: 'Antonio', balance: 144.9, originalCurrency: 'USD' },
+  { name: 'Efectivo',     ownerName: 'Antonio', balance: 14.0, originalCurrency: 'MXN' },
   { name: 'Ontop',        ownerName: 'Antonio',  balance: 452.76, originalCurrency: 'USD' },
-  { name: 'Binance',      ownerName: 'Antonio',  balance: 752, originalCurrency: 'USD' },
-  { name: 'Binance',     ownerName: 'Nohelia',  balance: 478.21, originalCurrency: 'USD' },
+  { name: 'Binance',      ownerName: 'Antonio',  balance: 854.22, originalCurrency: 'USD' },
+  { name: 'Binance',     ownerName: 'Nohelia',  balance: 336.16, originalCurrency: 'USD' },
 ];
 
 const categories = [

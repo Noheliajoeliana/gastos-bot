@@ -1,7 +1,8 @@
 const { Markup } = require('telegraf');
 const Loan = require('../models/Loan');
+const Account = require('../models/Account');
 const { getSession, setSession, clearSession, updateSession } = require('../utils/session');
-const { toUSD, fmt } = require('../utils/helpers');
+const { toUSD, fmt, updateAccountBalance } = require('../utils/helpers');
 
 const CANCEL_BTN = Markup.button.callback('❌ Cancelar', 'pr:x');
 
@@ -22,6 +23,20 @@ async function startPrestamo(ctx) {
   );
 }
 
+async function askAccount(ctx, lender) {
+  const accounts = await Account.find({ owner: lender._id, isActive: true });
+  if (accounts.length === 0) return ctx.reply(`❌ ${lender.name} no tiene cuentas activas.`);
+  updateSession(ctx.chat.id, { step: 'selectAccount' });
+  const buttons = accounts.map(a =>
+    [Markup.button.callback(`${a.name} ($${fmt(a.balance)})`, `pr:acc:${a._id}`)]
+  );
+  buttons.push([CANCEL_BTN]);
+  await ctx.reply(
+    `🏦 *¿Desde qué cuenta de ${lender.name} sale el dinero?*`,
+    { parse_mode: 'Markdown', ...Markup.inlineKeyboard(buttons) }
+  );
+}
+
 async function askNote(ctx) {
   updateSession(ctx.chat.id, { step: 'enterNote' });
   await ctx.reply('📝 *¿Nota?*', {
@@ -32,13 +47,14 @@ async function askNote(ctx) {
 
 async function askConfirm(ctx) {
   const { data } = getSession(ctx.chat.id);
-  // himToHer: Nohelia lends to Antonio → Antonio owes Nohelia
-  // herToHim: Antonio lends to Nohelia → Nohelia owes Antonio
-  const lender = data.direction === 'himToHer' ? ctx.user.name : ctx.otherUser.name;
-  const borrower = data.direction === 'himToHer' ? ctx.otherUser.name : ctx.user.name;
+  // himToHer = Nohelia lends to Antonio; herToHim = Antonio lends to Nohelia
+  const lender = data.direction === 'himToHer' ? ctx.users.nohelia.name : ctx.users.antonio.name;
+  const borrower = data.direction === 'himToHer' ? ctx.users.antonio.name : ctx.users.nohelia.name;
+  const account = await Account.findById(data.accountId);
   const lines = [
     `💸 *Prestamista:* ${lender}`,
     `🤲 *Deudor:* ${borrower}`,
+    `🏦 *Cuenta:* ${account.name} ($${fmt(account.balance)} USD)`,
     `💵 *Monto:* ${fmt(data.amount)} ${data.currency}${data.currency !== 'USD' ? ` → $${fmt(data.amountUSD)} USD` : ''}`,
   ];
   if (data.note) lines.push(`📝 *Nota:* ${data.note}`);
@@ -64,9 +80,20 @@ function register(bot) {
     if (action === 'x') { clearSession(ctx.chat.id); return ctx.reply('❌ Flujo cancelado.'); }
 
     if (action === 'dir') {
-      // 'me' = I lend to him → himToHer (debt direction: him to her = Antonio owes Nohelia)
-      const direction = value === 'me' ? 'himToHer' : 'herToHim';
-      updateSession(ctx.chat.id, { data: { direction }, step: 'enterAmount' });
+      const iAmNohelia = ctx.user.name === 'Nohelia';
+      // himToHer = Nohelia lends to Antonio; herToHim = Antonio lends to Nohelia
+      const direction = value === 'me'
+        ? (iAmNohelia ? 'himToHer' : 'herToHim')
+        : (iAmNohelia ? 'herToHim' : 'himToHer');
+      updateSession(ctx.chat.id, { data: { direction } });
+      const { nohelia, antonio } = ctx.users;
+      const lender = direction === 'himToHer' ? nohelia : antonio;
+      await askAccount(ctx, lender);
+      return;
+    }
+
+    if (action === 'acc') {
+      updateSession(ctx.chat.id, { data: { ...getSession(ctx.chat.id).data, accountId: value }, step: 'enterAmount' });
       await ctx.reply('💵 *¿Cuánto?* Escribe el monto:', { parse_mode: 'Markdown' });
       return;
     }
@@ -93,6 +120,7 @@ function register(bot) {
       const { data } = getSession(ctx.chat.id);
       await Loan.create({
         direction: data.direction,
+        sourceAccount: data.accountId,
         originalAmount: data.amount,
         remainingAmount: data.amount,
         currency: data.currency,
@@ -102,6 +130,7 @@ function register(bot) {
         note: data.note || null,
         status: 'active',
       });
+      await updateAccountBalance(data.accountId, -data.amountUSD);
       clearSession(ctx.chat.id);
       await ctx.reply('✅ *Préstamo registrado.*', { parse_mode: 'Markdown' });
     }

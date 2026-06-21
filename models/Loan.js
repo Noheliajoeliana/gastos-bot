@@ -9,6 +9,7 @@ const loanSchema = new mongoose.Schema({
   amountUSD: { type: Number, required: true },
   remainingAmountUSD: { type: Number, required: true },
   date: { type: Date, default: Date.now },
+  sourceAccount: { type: mongoose.Schema.Types.ObjectId, ref: 'Account', default: null },
   note: { type: String, default: null },
   status: { type: String, enum: ['active', 'settled'], default: 'active' },
 }, { timestamps: true });

@@ -6,7 +6,7 @@ const loanPaymentSchema = new mongoose.Schema({
   currency: { type: String, required: true },
   exchangeRate: { type: Number, required: true, default: 1 },
   amountUSD: { type: Number, required: true },
-  fromAccount: { type: mongoose.Schema.Types.ObjectId, ref: 'Account', required: true },
+  fromAccount: { type: mongoose.Schema.Types.ObjectId, ref: 'Account', default: null },
   toAccount: { type: mongoose.Schema.Types.ObjectId, ref: 'Account', required: true },
   date: { type: Date, default: Date.now },
   note: { type: String, default: null },
