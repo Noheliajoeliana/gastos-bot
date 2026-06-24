@@ -117,8 +117,9 @@ async function showPeriod(ctx) {
       const catName = tx.category ? tx.category.name : (tx.type === 'income' ? 'Ingresos sin categoría' : 'Sin categoría');
       if (!byCategory[catName]) byCategory[catName] = { total: 0, items: [] };
       byCategory[catName].total += tx.amountUSD;
+      const acct = tx.account ? ` [${tx.account.name}]` : '';
       const note = tx.note ? ` — ${tx.note}` : '';
-      byCategory[catName].items.push(`    ${formatDate(tx.date)} $${fmt(tx.amountUSD)}${note}`);
+      byCategory[catName].items.push(`    ${formatDate(tx.date)} $${fmt(tx.amountUSD)}${acct}${note}`);
     }
 
     for (const [cat, { total, items }] of Object.entries(byCategory)) {
