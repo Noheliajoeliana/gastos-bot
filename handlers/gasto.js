@@ -201,6 +201,12 @@ async function askConfirm(ctx) {
     const cat = data.categoryId ? await Category.findById(data.categoryId) : null;
     lines.push(`👤 *Gasto de:* ${expenseOwner.name}`);
     if (cat) lines.push(`🏷️ *Categoría:* ${cat.name}`);
+    if (!account.owner._id.equals(expenseOwner._id)) {
+      const dir = account.owner._id.equals(ctx.users.antonio._id) ? 'toHim' : 'toHer';
+      const debtor = dir === 'toHim' ? ctx.users.nohelia.name : ctx.users.antonio.name;
+      const creditor = dir === 'toHim' ? ctx.users.antonio.name : ctx.users.nohelia.name;
+      lines.push(`💸 *Deuda generada:* ${debtor} → ${creditor} $${fmt(data.amountUSD)} USD`);
+    }
   }
 
   if (data.note) lines.push(`📝 *Nota:* ${data.note}`);
@@ -263,11 +269,19 @@ async function confirmGasto(ctx) {
     }
   } else {
     const expenseOwnerId = data.expenseOwnerId || account.owner._id;
+    const crossOwner = !account.owner._id.equals(expenseOwnerId);
+    const debtFields = crossOwner
+      ? {
+          debtDirection: account.owner._id.equals(antonio._id) ? 'toHim' : 'toHer',
+          debtAmount: data.amountUSD,
+        }
+      : {};
     await Transaction.create({
       ...base,
       owner: expenseOwnerId,
       category: data.categoryId || null,
       isShared: false,
+      ...debtFields,
     });
   }
 

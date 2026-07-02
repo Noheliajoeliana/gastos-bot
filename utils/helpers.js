@@ -17,7 +17,7 @@ async function calculateNetBalance() {
   const nohelia = await User.findOne({ name: 'Nohelia' });
   const antonio = await User.findOne({ name: 'Antonio' });
 
-  const sharedExpenses = await Transaction.find({ type: 'expense', isShared: true });
+  const sharedExpenses = await Transaction.find({ type: 'expense', debtDirection: { $in: ['toHim', 'toHer'] } });
   let toHimTotal = 0;
   let toHerTotal = 0;
   for (const exp of sharedExpenses) {
